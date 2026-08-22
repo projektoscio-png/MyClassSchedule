@@ -1446,17 +1446,21 @@ function scheduleDriveUpload(){
 }
 
 function driveOfferRemoteUpdate(remoteData){
-  if(document.getElementById('driveUpdateToast')) return;
+  if(document.getElementById('driveUpdateBanner')) return;
   const t = document.createElement('div');
-  t.id = 'driveUpdateToast';
-  t.className = 'toast show';
-  t.style.cursor = 'pointer';
-  t.textContent = '☁️ Hay cambios más recientes en Drive. Toca para actualizar.';
-  t.onclick = ()=>{
+  t.id = 'driveUpdateBanner';
+  t.className = 'drive-banner';
+  t.innerHTML = `
+    <span class="drive-banner-text">☁️ Hay cambios más recientes en Google Drive</span>
+    <button type="button" id="driveUpdateBtn">Actualizar</button>
+    <button type="button" id="driveUpdateDismiss" aria-label="Cerrar">${ICONS.x}</button>
+  `;
+  document.body.appendChild(t);
+  document.getElementById('driveUpdateBtn').onclick = ()=>{
     t.remove();
     confirmImportPreview(remoteData, 'la copia de Google Drive');
   };
-  document.body.appendChild(t);
+  document.getElementById('driveUpdateDismiss').onclick = ()=> t.remove();
 }
 
 /* Comprueba Drive al abrir la app (silencioso: no pide inicio de sesión si no hace falta). */
