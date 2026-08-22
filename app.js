@@ -6,7 +6,7 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-03';
+const APP_VERSION = '2026-08-22-04';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -881,13 +881,14 @@ function openClassModal(id, opts){
   const lockedSubject = lockSubjectId ? getSubject(lockSubjectId) : null;
   const subj = existing ? getSubject(existing.subjectId) : lockedSubject;
   const chosenColor = existing ? (subj?subj.color:SUBJECT_COLORS[0]) : (lockedSubject?lockedSubject.color:SUBJECT_COLORS[state.subjects.length % SUBJECT_COLORS.length]);
-  const initialDays = existing ? existing.days.slice() : [ui.day];
+  const initialDays = existing ? existing.days.slice() : [];
+  const req = '<span style="color:var(--danger)">*</span>';
 
   openModal(`
     <div class="modal-head"><div class="modal-title">${existing?'Editar tramo horario':'Nuevo tramo horario'}</div>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
-    <div class="field">
-      <label>Asignatura</label>
+    <div class="field" id="fieldSubject">
+      <label>Asignatura ${req}</label>
       ${lockSubjectId
         ? `<div style="display:flex;align-items:center;gap:8px;padding:11px 13px;border-radius:12px;background:var(--bg);border:1.5px solid var(--line);font-weight:700;font-size:14.5px;">
              <span style="width:12px;height:12px;border-radius:50%;background:${lockedSubject?lockedSubject.color:'#999'};flex-shrink:0;"></span>
@@ -896,27 +897,30 @@ function openClassModal(id, opts){
         : `<input type="text" id="fSubject" list="subjectList" placeholder="Ej. Matemáticas" value="${existing?escapeHtml(subj?subj.name:''):''}">
            <datalist id="subjectList">${state.subjects.map(s=>`<option value="${escapeHtml(s.name)}">`).join('')}</datalist>`
       }
+      <div class="field-error" id="errSubject">Escribe el nombre de la asignatura</div>
     </div>
-    <div class="field">
-      <label>Días</label>
+    <div class="field" id="fieldDays">
+      <label>Días ${req}</label>
       <div class="daypick" id="fDay">${DOW_SHORT.map((d,i)=>`<button type="button" data-d="${i}" class="${initialDays.includes(i)?'active':''}">${d}</button>`).join('')}</div>
       <div style="font-size:11.5px;color:var(--ink-faint);margin-top:6px;">Puedes marcar varios días si la clase es a la misma hora, por ejemplo Lunes y Miércoles.</div>
+      <div class="field-error" id="errDays">Selecciona al menos un día</div>
     </div>
     <div class="row2">
-      <div class="field"><label>Hora inicio</label><input type="time" id="fStart" value="${existing?existing.start:'08:00'}"></div>
-      <div class="field"><label>Hora fin</label><input type="time" id="fEnd" value="${existing?existing.end:'09:00'}"></div>
+      <div class="field" id="fieldStart"><label>Hora inicio ${req}</label><input type="time" id="fStart" value="${existing?existing.start:''}"><div class="field-error" id="errStart">Obligatorio</div></div>
+      <div class="field" id="fieldEnd"><label>Hora fin ${req}</label><input type="time" id="fEnd" value="${existing?existing.end:''}"><div class="field-error" id="errEnd">Obligatorio</div></div>
     </div>
     <div class="row2">
-      <div class="field"><label>Aula</label><input type="text" id="fRoom" placeholder="Ej. A-204" value="${existing?escapeHtml(existing.room||''):''}"></div>
+      <div class="field" id="fieldRoom"><label>Aula ${req}</label><input type="text" id="fRoom" placeholder="Ej. A-204" value="${existing?escapeHtml(existing.room||''):''}"><div class="field-error" id="errRoom">Obligatorio</div></div>
       <div class="field"><label>Profesor/a</label><input type="text" id="fTeacher" placeholder="Opcional" value="${existing?escapeHtml(existing.teacher||''):''}"></div>
     </div>
-    <div class="field">
-      <label>Periodo del curso (opcional)</label>
+    <div class="field" id="fieldPeriod">
+      <label>Periodo del curso ${req}</label>
       <div class="row2" style="margin-top:0">
         <div class="field" style="margin-bottom:0"><input type="date" id="fDateStart" value="${existing?(existing.dateStart||''):''}"></div>
         <div class="field" style="margin-bottom:0"><input type="date" id="fDateEnd" value="${existing?(existing.dateEnd||''):''}"></div>
       </div>
-      <div style="font-size:11.5px;color:var(--ink-faint);margin-top:6px;">Déjalo en blanco si la clase es durante todo el curso. Rellénalo si solo se da, por ejemplo, en un trimestre concreto.</div>
+      <div style="font-size:11.5px;color:var(--ink-faint);margin-top:6px;">Por ejemplo, del inicio al final del curso, o solo un trimestre concreto.</div>
+      <div class="field-error" id="errPeriod">Indica fecha de inicio y de fin</div>
     </div>
     <div class="field">
       <label>Color de la asignatura</label>
@@ -932,49 +936,78 @@ function openClassModal(id, opts){
     b.onclick=()=>{
       const d = Number(b.dataset.d);
       if(selDays.includes(d)){
-        if(selDays.length===1){ toast('Debe quedar marcado al menos un día'); return; }
         selDays = selDays.filter(x=>x!==d);
       } else {
         selDays.push(d);
       }
       b.classList.toggle('active');
+      if(selDays.length) clearFieldError('fieldDays','errDays');
     };
   });
   document.querySelectorAll('#fColor .color-dot').forEach(b=>b.onclick=()=>{ selColor=b.dataset.c; document.querySelectorAll('#fColor .color-dot').forEach(x=>x.classList.toggle('active',x===b)); });
 
   const fStartEl = document.getElementById('fStart'), fEndEl = document.getElementById('fEnd');
-  fEndEl.addEventListener('input', ()=>{ endManuallyEdited = true; });
+  fEndEl.addEventListener('input', ()=>{ endManuallyEdited = true; if(fEndEl.value) clearFieldError('fieldEnd','errEnd'); });
   fStartEl.addEventListener('input', ()=>{
+    if(fStartEl.value) clearFieldError('fieldStart','errStart');
     if(endManuallyEdited) return;
-    const s = timeToMin(fStartEl.value || '08:00');
+    if(!fStartEl.value) return;
+    const s = timeToMin(fStartEl.value);
     fEndEl.value = minTimeToStr(s + 60);
+    if(fEndEl.value) clearFieldError('fieldEnd','errEnd');
   });
+
+  const fRoomEl = document.getElementById('fRoom');
+  fRoomEl.addEventListener('input', ()=>{ if(fRoomEl.value.trim()) clearFieldError('fieldRoom','errRoom'); });
+
+  const fSubjectEl = document.getElementById('fSubject');
+  if(fSubjectEl) fSubjectEl.addEventListener('input', ()=>{ if(fSubjectEl.value.trim()) clearFieldError('fieldSubject','errSubject'); });
 
   const fDateStartEl = document.getElementById('fDateStart'), fDateEndEl = document.getElementById('fDateEnd');
-  fDateEndEl.addEventListener('input', ()=>{ dateEndManuallyEdited = true; });
+  fDateEndEl.addEventListener('input', ()=>{ dateEndManuallyEdited = true; if(fDateStartEl.value && fDateEndEl.value) clearFieldError('fieldPeriod','errPeriod'); });
   fDateStartEl.addEventListener('input', ()=>{
-    if(dateEndManuallyEdited) return;
-    if(fDateStartEl.value){ fDateEndEl.value = defaultCourseEndDate(fDateStartEl.value); }
+    if(!dateEndManuallyEdited && fDateStartEl.value){ fDateEndEl.value = defaultCourseEndDate(fDateStartEl.value); }
+    if(fDateStartEl.value && fDateEndEl.value) clearFieldError('fieldPeriod','errPeriod');
   });
 
+  function clearFieldError(fieldId, errId){
+    if(fieldId) document.getElementById(fieldId).classList.remove('invalid');
+    document.getElementById(errId).classList.remove('show');
+  }
+  function markFieldError(fieldId, errId){
+    if(fieldId) document.getElementById(fieldId).classList.add('invalid');
+    document.getElementById(errId).classList.add('show');
+  }
+
   document.getElementById('fSave').onclick=()=>{
+    let hasErrors = false;
+    let name = '';
+    if(!lockSubjectId){
+      name = document.getElementById('fSubject').value.trim();
+      if(!name){ markFieldError('fieldSubject','errSubject'); hasErrors = true; } else { clearFieldError('fieldSubject','errSubject'); }
+    }
+    if(selDays.length===0){ markFieldError('fieldDays','errDays'); hasErrors = true; } else { clearFieldError('fieldDays','errDays'); }
+    const start = fStartEl.value;
+    if(!start){ markFieldError('fieldStart','errStart'); hasErrors = true; } else { clearFieldError('fieldStart','errStart'); }
+    const end = fEndEl.value;
+    if(!end){ markFieldError('fieldEnd','errEnd'); hasErrors = true; } else { clearFieldError('fieldEnd','errEnd'); }
+    const room = fRoomEl.value.trim();
+    if(!room){ markFieldError('fieldRoom','errRoom'); hasErrors = true; } else { clearFieldError('fieldRoom','errRoom'); }
+    let dateStart = fDateStartEl.value || '';
+    let dateEnd = fDateEndEl.value || '';
+    if(!dateStart || !dateEnd){ markFieldError('fieldPeriod','errPeriod'); hasErrors = true; } else { clearFieldError('fieldPeriod','errPeriod'); }
+
+    if(hasErrors){ toast('Completa los campos obligatorios marcados en rojo'); return; }
+
     let subject;
     if(lockSubjectId){
       subject = getSubject(lockSubjectId);
       if(!subject){ toast('No se encontró la asignatura'); return; }
     } else {
-      const name = document.getElementById('fSubject').value.trim();
-      if(!name){ toast('Escribe el nombre de la asignatura'); return; }
       subject = getOrCreateSubject(name);
     }
-    if(selDays.length===0){ toast('Selecciona al menos un día'); return; }
-    const start = document.getElementById('fStart').value || '08:00';
-    const end = document.getElementById('fEnd').value || '09:00';
-    const room = document.getElementById('fRoom').value.trim();
     const teacher = document.getElementById('fTeacher').value.trim();
-    let dateStart = document.getElementById('fDateStart').value || '';
-    let dateEnd = document.getElementById('fDateEnd').value || '';
-    if(dateStart && dateEnd && dateEnd < dateStart){ const t=dateStart; dateStart=dateEnd; dateEnd=t; }
+    if(dateEnd < dateStart){ const t=dateStart; dateStart=dateEnd; dateEnd=t; }
     subject.color = selColor;
     const days = selDays.slice().sort((a,b)=>a-b);
     if(existing){
