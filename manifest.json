@@ -1,0 +1,15 @@
+{
+  "name": "Mi Horario",
+  "short_name": "Mi Horario",
+  "description": "Horario de clases, exámenes, tareas y festivos",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F4F6FB",
+  "theme_color": "#3A4F7A",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
