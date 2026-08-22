@@ -6,7 +6,7 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-01';
+const APP_VERSION = '2026-08-22-02';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1362,6 +1362,19 @@ let driveTokenExpiry = 0;
 let driveSyncing = false;
 let driveUploadTimer = null;
 
+// Recuperar el permiso guardado de una sesión anterior (si no ha caducado),
+// para no tener que pedirlo de nuevo solo por haber recargado la página.
+(function restoreDriveToken(){
+  try{
+    const savedToken = localStorage.getItem('driveAccessTokenCache');
+    const savedExpiry = Number(localStorage.getItem('driveTokenExpiryCache')||0);
+    if(savedToken && savedExpiry > Date.now() + 30000){
+      driveAccessToken = savedToken;
+      driveTokenExpiry = savedExpiry;
+    }
+  }catch(e){}
+})();
+
 function driveConfigured(){ return GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID!=='PENDIENTE_CLIENT_ID'; }
 function driveIsConnected(){ return !!localStorage.getItem('driveConnected'); }
 
@@ -1403,6 +1416,8 @@ async function driveGetToken(silent){
       driveAccessToken = resp.access_token;
       driveTokenExpiry = Date.now() + (resp.expires_in||3600)*1000;
       localStorage.setItem('driveConnected','1');
+      localStorage.setItem('driveAccessTokenCache', driveAccessToken);
+      localStorage.setItem('driveTokenExpiryCache', String(driveTokenExpiry));
       resolve(driveAccessToken);
     };
     client.requestAccessToken({ prompt: promptValue });
@@ -1576,7 +1591,10 @@ function driveDisconnect(){
   localStorage.removeItem('driveConnected');
   localStorage.removeItem('driveLastSync');
   localStorage.removeItem('driveNeedsReconnect');
+  localStorage.removeItem('driveAccessTokenCache');
+  localStorage.removeItem('driveTokenExpiryCache');
   driveAccessToken = null;
+  driveTokenExpiry = 0;
   toast('Desconectado de Google Drive');
   render();
 }
