@@ -6,7 +6,7 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-05';
+const APP_VERSION = '2026-08-22-06';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -41,7 +41,7 @@ let state = loadState();
 let ui = { tab:'calendar', viewMode:'week', day: mondayIndex(new Date()), weekAnchor: todayISO(), subjectFilter:null };
 
 function defaultState(){
-  return { subjects:[], classes:[], items:[], holidays:[], settings:{ notified:[], weekMode:'full', lastModified:0 } };
+  return { subjects:[], classes:[], items:[], holidays:[], settings:{ notified:[], weekMode:'full', lastModified:0, notificationsEnabled:true } };
 }
 function migrateState(st){
   // Compatibilidad con copias antiguas: una clase por día (campo "day") -> varios días en un mismo registro ("days")
@@ -50,7 +50,7 @@ function migrateState(st){
       c.days = (typeof c.day==='number') ? [c.day] : [0];
     }
   });
-  st.settings = Object.assign({ notified:[], weekMode:'full', lastModified:0 }, st.settings||{});
+  st.settings = Object.assign({ notified:[], weekMode:'full', lastModified:0, notificationsEnabled:true }, st.settings||{});
   return st;
 }
 function loadState(){
@@ -597,8 +597,19 @@ function renderHolidays(){
    AJUSTES
    ================================================================== */function renderSettings(){
   const notifState = ('Notification' in window) ? Notification.permission : 'unsupported';
-  const notifLabel = notifState==='granted' ? 'Activadas' : notifState==='denied' ? 'Bloqueadas' : 'Activar';
+  const notifEnabled = state.settings.notificationsEnabled !== false;
   const weekMode = state.settings.weekMode || 'full';
+  let notifDesc, notifControl;
+  if(notifState==='denied'){
+    notifDesc = 'Bloqueadas en el navegador. Actívalas desde los ajustes del sitio en tu navegador.';
+    notifControl = '';
+  } else if(notifState==='granted'){
+    notifDesc = notifEnabled ? 'Avisos de exámenes y tareas próximas mientras la app está abierta' : 'Desactivadas';
+    notifControl = `<div class="switch ${notifEnabled?'on':''}" id="notifSwitch" role="button" aria-label="Activar o desactivar notificaciones"><div class="switch-knob"></div></div>`;
+  } else {
+    notifDesc = 'Avisos de exámenes y tareas próximas mientras la app está abierta';
+    notifControl = `<button class="settings-action" id="btnNotif">Activar</button>`;
+  }
   return `
   <div class="card">
     <div class="settings-item">
@@ -647,9 +658,9 @@ function renderHolidays(){
       <div class="settings-icon">${ICONS.bell}</div>
       <div class="settings-text">
         <div class="settings-title">Notificaciones</div>
-        <div class="settings-desc">Avisos de exámenes y tareas próximas mientras la app está abierta</div>
+        <div class="settings-desc">${notifDesc}</div>
       </div>
-      <button class="settings-action" id="btnNotif">${notifLabel}</button>
+      ${notifControl}
     </div>
   </div>
   <div class="card">
@@ -742,6 +753,12 @@ function bindContentEvents(){
 
   const btnNotif = document.getElementById('btnNotif');
   if(btnNotif) btnNotif.onclick = requestNotifPermission;
+  const notifSwitch = document.getElementById('notifSwitch');
+  if(notifSwitch) notifSwitch.onclick = ()=>{
+    const currentlyEnabled = state.settings.notificationsEnabled !== false;
+    state.settings.notificationsEnabled = !currentlyEnabled;
+    saveState(); render();
+  };
   const btnExport = document.getElementById('btnExport');
   if(btnExport) btnExport.onclick = exportData;
   const btnImport = document.getElementById('btnImport');
@@ -771,6 +788,26 @@ document.getElementById('fabBtn').onclick = ()=>{
   else if(ui.tab==='tasks') openItemModal(null, {type:'task', subjectId:ui.subjectFilter});
   else if(ui.tab==='exams') openItemModal(null, {type:'exam', subjectId:ui.subjectFilter});
   else if(ui.tab==='holidays') openHolidayModal(null);
+};
+
+function updateNotifBellIcon(){
+  const btn = document.getElementById('notifBtn');
+  if(!btn) return;
+  const notifState = ('Notification' in window) ? Notification.permission : 'unsupported';
+  const enabled = notifState==='granted' && state.settings.notificationsEnabled !== false;
+  btn.style.opacity = enabled ? '1' : '0.5';
+}
+
+document.getElementById('notifBtn').onclick = ()=>{
+  const notifState = ('Notification' in window) ? Notification.permission : 'unsupported';
+  if(notifState==='denied'){ toast('Notificaciones bloqueadas en el navegador. Actívalas desde sus ajustes.'); return; }
+  if(notifState!=='granted'){ requestNotifPermission(); return; }
+  const currentlyEnabled = state.settings.notificationsEnabled !== false;
+  state.settings.notificationsEnabled = !currentlyEnabled;
+  saveState();
+  toast(state.settings.notificationsEnabled ? 'Notificaciones activadas' : 'Notificaciones desactivadas');
+  updateNotifBellIcon();
+  if(ui.tab==='settings') render();
 };
 
 /* ==================================================================
@@ -1336,12 +1373,14 @@ function requestNotifPermission(){
   if(!('Notification' in window)){ toast('Este navegador no admite notificaciones'); return; }
   if(Notification.permission==='denied'){ toast('Notificaciones bloqueadas en el navegador'); return; }
   Notification.requestPermission().then(p=>{
-    render();
-    if(p==='granted') toast('Notificaciones activadas'); 
+    if(p==='granted'){ state.settings.notificationsEnabled = true; saveState(); toast('Notificaciones activadas'); }
+    updateNotifBellIcon();
+    if(ui.tab==='settings') render();
   });
 }
 function checkReminders(){
   if(!('Notification' in window) || Notification.permission!=='granted') return;
+  if(state.settings.notificationsEnabled === false) return;
   const today = todayISO();
   state.items.forEach(i=>{
     const diff = daysBetween(today,i.date);
@@ -1670,6 +1709,7 @@ function initSwipeNav(){
    ================================================================== */
 render();
 initSwipeNav();
+updateNotifBellIcon();
 checkReminders();
 setInterval(checkReminders, 60000);
 setTimeout(driveCheckOnLoad, 1200);
