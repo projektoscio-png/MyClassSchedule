@@ -1200,7 +1200,8 @@ function bytesLookLikeSqlite(bytes){
   return true;
 }
 
-function confirmImportPreview(parsed, sourceLabel){
+function confirmImportPreview(parsed, sourceLabel, opts){
+  opts = opts || {};
   const nc = (parsed.subjects||[]).length, ncl=(parsed.classes||[]).length, ni=(parsed.items||[]).length, nh=(parsed.holidays||[]).length;
   openModal(`
     <div class="modal-head"><div class="modal-title">Importar copia</div>
@@ -1213,7 +1214,15 @@ function confirmImportPreview(parsed, sourceLabel){
   `);
   document.getElementById('fConfirmImport').onclick=()=>{
     state = migrateState(Object.assign(defaultState(), parsed));
-    saveState(); closeModal(); render(); toast('Datos importados');
+    if(opts.fromDrive){
+      // Ya coincide con lo que hay en Drive: guardamos tal cual, sin cambiar su fecha
+      // ni reprogramar una nueva subida (si no, entraría en un bucle subir-bajar-subir).
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      localStorage.setItem('driveLastSync', String(Date.now()));
+    } else {
+      saveState();
+    }
+    closeModal(); render(); toast('Datos importados');
   };
 }
 
@@ -1512,7 +1521,7 @@ function driveOfferRemoteUpdate(remoteData){
   document.body.appendChild(t);
   document.getElementById('driveUpdateBtn').onclick = ()=>{
     t.remove();
-    confirmImportPreview(remoteData, 'la copia de Google Drive');
+    confirmImportPreview(remoteData, 'la copia de Google Drive', {fromDrive:true});
   };
   document.getElementById('driveUpdateDismiss').onclick = ()=> t.remove();
 }
