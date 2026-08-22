@@ -595,6 +595,31 @@ function renderHolidays(){
 /* ==================================================================
    AJUSTES
    ================================================================== */
+function renderDriveDebugPanel(){
+  let dbg = null;
+  try{ dbg = JSON.parse(localStorage.getItem('driveDebug')||'null'); }catch(e){}
+  const fmt = ts => ts ? new Date(ts).toLocaleString('es-ES',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
+  const actionLabel = {
+    'subido':'Se subieron los cambios de este dispositivo a Drive',
+    'creado':'Se creó el archivo en Drive por primera vez',
+    'ofrecida-actualizacion':'Drive tenía algo más nuevo (banner mostrado)',
+    'ya-igualado':'Ya estaban igualados, nada que hacer',
+    'sin-archivo-remoto':'Todavía no existe ningún archivo en Drive',
+  };
+  if(!dbg){
+    return `<div style="padding:12px 14px; font-size:11.5px; color:var(--ink-faint);">Sin datos de diagnóstico todavía. Pulsa "Sincronizar" una vez.</div>`;
+  }
+  return `<div style="padding:10px 14px 14px; font-size:11.5px; color:var(--ink-soft); line-height:1.7; border-top:1px solid var(--line);">
+    <div style="font-weight:700; color:var(--ink); margin:8px 0 4px;">Diagnóstico (última comprobación: ${fmt(dbg.at)})</div>
+    ${dbg.error ? `<div style="color:var(--danger)">Error: ${escapeHtml(dbg.error)}</div>` :
+      `<div>Archivo en Drive: <b>${dbg.fileExists?'sí existe':'no existe'}</b></div>
+       <div>Última modificación local: <b>${fmt(dbg.localModified)}</b></div>
+       <div>Última modificación en Drive: <b>${fmt(dbg.remoteModified)}</b></div>
+       <div>Resultado: <b>${actionLabel[dbg.action]||dbg.action||'—'}</b></div>`
+    }
+  </div>`;
+}
+
 function renderSettings(){
   const notifState = ('Notification' in window) ? Notification.permission : 'unsupported';
   const notifLabel = notifState==='granted' ? 'Activadas' : notifState==='denied' ? 'Bloqueadas' : 'Activar';
@@ -641,6 +666,7 @@ function renderSettings(){
       </div>
       <button class="settings-action" id="btnDriveSyncNow">Sincronizar</button>
     </div>` : ''}
+    ${driveIsConnected() ? renderDriveDebugPanel() : ''}
   </div>
   <div class="card">
     <div class="settings-item">
@@ -1423,6 +1449,10 @@ async function driveUpload(token, fileId, payload){
 }
 
 /* Sube los datos locales a Drive si son más nuevos que los remotos (o no hay copia aún). */
+function driveSaveDebug(info){
+  try{ localStorage.setItem('driveDebug', JSON.stringify(Object.assign({at:Date.now()}, info))); }catch(e){}
+}
+
 async function driveSyncUpload(opts){
   opts = opts || {};
   const showToast = !!opts.showToast;
@@ -1436,19 +1466,24 @@ async function driveSyncUpload(opts){
     if(remote){
       const remoteData = await driveDownload(token, remote.id);
       const remoteModified = (remoteData.settings && remoteData.settings.lastModified) || 0;
+      driveSaveDebug({ fileExists:true, fileId:remote.id, remoteModified, localModified: state.settings.lastModified||0, action:null });
       if(remoteModified > (state.settings.lastModified||0)){
         // Hay una versión más reciente en Drive: avisar en vez de sobreescribirla
+        driveSaveDebug({ fileExists:true, fileId:remote.id, remoteModified, localModified: state.settings.lastModified||0, action:'ofrecida-actualizacion' });
         driveOfferRemoteUpdate(remoteData);
         return;
       }
       await driveUpload(token, remote.id, state);
+      driveSaveDebug({ fileExists:true, fileId:remote.id, remoteModified, localModified: state.settings.lastModified||0, action:'subido' });
     } else {
       await driveUpload(token, null, state);
+      driveSaveDebug({ fileExists:false, remoteModified:0, localModified: state.settings.lastModified||0, action:'creado' });
     }
     localStorage.setItem('driveLastSync', String(Date.now()));
     if(showToast) toast('Sincronizado con Google Drive');
   }catch(e){
     if(!interactive){ localStorage.setItem('driveNeedsReconnect','1'); }
+    driveSaveDebug({ error: e.message });
     if(showToast) toast('No se pudo sincronizar: '+e.message);
     if(document.getElementById('content') && ui.tab==='settings') render();
   } finally {
@@ -1487,19 +1522,27 @@ async function driveCheckOnLoad(){
     const token = await driveGetToken(true);
     localStorage.removeItem('driveNeedsReconnect');
     const remote = await driveFindFile(token);
-    if(!remote){ return; }
+    if(!remote){
+      driveSaveDebug({ fileExists:false, remoteModified:0, localModified: state.settings.lastModified||0, action:'sin-archivo-remoto' });
+      return;
+    }
     const remoteData = await driveDownload(token, remote.id);
     const remoteModified = (remoteData.settings && remoteData.settings.lastModified) || 0;
     if(remoteModified > (state.settings.lastModified||0)){
+      driveSaveDebug({ fileExists:true, fileId:remote.id, remoteModified, localModified: state.settings.lastModified||0, action:'ofrecida-actualizacion' });
       driveOfferRemoteUpdate(remoteData);
     } else if((state.settings.lastModified||0) > remoteModified){
       await driveUpload(token, remote.id, state);
       localStorage.setItem('driveLastSync', String(Date.now()));
+      driveSaveDebug({ fileExists:true, fileId:remote.id, remoteModified, localModified: state.settings.lastModified||0, action:'subido' });
+    } else {
+      driveSaveDebug({ fileExists:true, fileId:remote.id, remoteModified, localModified: state.settings.lastModified||0, action:'ya-igualado' });
     }
   }catch(e){
     // La sesión de Google probablemente ha caducado en este dispositivo: lo marcamos
     // para que Ajustes lo muestre, pero no interrumpimos al usuario con un aviso.
     localStorage.setItem('driveNeedsReconnect','1');
+    driveSaveDebug({ error: e.message });
   }
 }
 
