@@ -2,6 +2,10 @@
 /* Todos los datos se guardan solo en este dispositivo (localStorage). */
 
 const STORAGE_KEY = 'miHorario_data_v1';
+/* Rellena esto con tu Client ID de Google Cloud (termina en .apps.googleusercontent.com) */
+const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -28,6 +32,7 @@ const ICONS = {
   examDoc:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.5h7L19 8v12.5a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z"/><path d="M14 3.5V8h5"/><path d="m9 14 2 2 4-4.5"/></svg>',
   listIcon:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="6" height="6" rx="1.5"/><rect x="3.5" y="14" width="6" height="6" rx="1.5"/><path d="M12.5 6h8M12.5 18h8"/></svg>',
   chevR:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>',
+  cloud:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A5.5 5.5 0 0 1 17.2 8.1 4 4 0 0 1 17 16H7Z"/></svg>',
 };
 
 /* ---------- state ---------- */
@@ -35,7 +40,7 @@ let state = loadState();
 let ui = { tab:'calendar', viewMode:'week', day: mondayIndex(new Date()), weekAnchor: todayISO(), subjectFilter:null };
 
 function defaultState(){
-  return { subjects:[], classes:[], items:[], holidays:[], settings:{ notified:[], weekMode:'full' } };
+  return { subjects:[], classes:[], items:[], holidays:[], settings:{ notified:[], weekMode:'full', lastModified:0 } };
 }
 function migrateState(st){
   // Compatibilidad con copias antiguas: una clase por día (campo "day") -> varios días en un mismo registro ("days")
@@ -44,7 +49,7 @@ function migrateState(st){
       c.days = (typeof c.day==='number') ? [c.day] : [0];
     }
   });
-  st.settings = Object.assign({ notified:[], weekMode:'full' }, st.settings||{});
+  st.settings = Object.assign({ notified:[], weekMode:'full', lastModified:0 }, st.settings||{});
   return st;
 }
 function loadState(){
@@ -55,7 +60,11 @@ function loadState(){
     return migrateState(Object.assign(defaultState(), parsed));
   }catch(e){ return defaultState(); }
 }
-function saveState(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+function saveState(){
+  state.settings.lastModified = Date.now();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  scheduleDriveUpload();
+}
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 function mondayIndex(d){ const n=d.getDay(); return n===0?6:n-1; } // 0=Mon..6=Sun
@@ -608,6 +617,29 @@ function renderSettings(){
   </div>
   <div class="card">
     <div class="settings-item">
+      <div class="settings-icon">${ICONS.cloud}</div>
+      <div class="settings-text">
+        <div class="settings-title">Sincronización con Google Drive</div>
+        <div class="settings-desc">${
+          !driveConfigured() ? 'Todavía no configurada'
+          : driveIsConnected() ? ('Conectado' + (localStorage.getItem('driveLastSync') ? ' · última sync ' + new Date(Number(localStorage.getItem('driveLastSync'))).toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}) : ''))
+          : 'Mantén tus datos iguales entre dispositivos'
+        }</div>
+      </div>
+      <button class="settings-action" id="btnDriveConnect">${driveIsConnected() ? 'Desconectar' : 'Conectar'}</button>
+    </div>
+    ${driveIsConnected() ? `<div style="height:1px;background:var(--line)"></div>
+    <div class="settings-item">
+      <div class="settings-icon">${ICONS.download}</div>
+      <div class="settings-text">
+        <div class="settings-title">Sincronizar ahora</div>
+        <div class="settings-desc">Comprueba si hay cambios nuevos en Drive</div>
+      </div>
+      <button class="settings-action" id="btnDriveSyncNow">Sincronizar</button>
+    </div>` : ''}
+  </div>
+  <div class="card">
+    <div class="settings-item">
       <div class="settings-icon">${ICONS.bell}</div>
       <div class="settings-text">
         <div class="settings-title">Notificaciones</div>
@@ -721,6 +753,10 @@ function bindContentEvents(){
       render();
     };
   });
+  const btnDriveConnect = document.getElementById('btnDriveConnect');
+  if(btnDriveConnect) btnDriveConnect.onclick = ()=>{ driveIsConnected() ? driveDisconnect() : driveConnect(); };
+  const btnDriveSyncNow = document.getElementById('btnDriveSyncNow');
+  if(btnDriveSyncNow) btnDriveSyncNow.onclick = ()=>driveSyncUpload(false);
 }
 
 document.getElementById('fabBtn').onclick = ()=>{
@@ -1274,8 +1310,178 @@ function checkReminders(){
 }
 
 /* ==================================================================
-   Sugerencia de instalación (Add to Home screen)
+   SINCRONIZACIÓN CON GOOGLE DRIVE
+   Guarda una copia de los datos en una carpeta privada de tu Drive
+   (solo visible para esta app) y la compara al abrir la app.
    ================================================================== */
+let driveTokenClient = null;
+let driveAccessToken = null;
+let driveTokenExpiry = 0;
+let driveSyncing = false;
+let driveUploadTimer = null;
+
+function driveConfigured(){ return GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID!=='PENDIENTE_CLIENT_ID'; }
+function driveIsConnected(){ return !!localStorage.getItem('driveConnected'); }
+
+function driveEnsureTokenClient(){
+  if(driveTokenClient || typeof google==='undefined' || !google.accounts) return driveTokenClient;
+  driveTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: DRIVE_SCOPE,
+    callback: '', // se sobreescribe en cada llamada
+  });
+  return driveTokenClient;
+}
+
+function driveGetToken(silent){
+  return new Promise((resolve, reject)=>{
+    if(!driveConfigured()){ reject(new Error('Google Drive no está configurado todavía')); return; }
+    if(driveAccessToken && Date.now() < driveTokenExpiry - 30000){ resolve(driveAccessToken); return; }
+    const client = driveEnsureTokenClient();
+    if(!client){ reject(new Error('No se pudo cargar el inicio de sesión de Google. Revisa tu conexión.')); return; }
+    client.callback = (resp)=>{
+      if(resp.error){ reject(new Error(resp.error)); return; }
+      driveAccessToken = resp.access_token;
+      driveTokenExpiry = Date.now() + (resp.expires_in||3600)*1000;
+      localStorage.setItem('driveConnected','1');
+      resolve(driveAccessToken);
+    };
+    client.requestAccessToken({ prompt: silent ? '' : 'consent' });
+  });
+}
+
+async function driveFindFile(token){
+  const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,modifiedTime)`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if(!res.ok) throw new Error('No se pudo consultar Google Drive');
+  const data = await res.json();
+  return (data.files && data.files[0]) || null;
+}
+
+async function driveDownload(token, fileId){
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if(!res.ok) throw new Error('No se pudo descargar la copia de Drive');
+  return res.json();
+}
+
+async function driveUpload(token, fileId, payload){
+  const body = JSON.stringify(payload);
+  if(fileId){
+    const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+      method:'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type':'application/json' },
+      body
+    });
+    if(!res.ok) throw new Error('No se pudo actualizar la copia en Drive');
+    return res.json();
+  } else {
+    const metadata = { name: DRIVE_FILE_NAME, mimeType:'application/json' };
+    const boundary = 'mihorario' + uid();
+    const multipartBody =
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+      `--${boundary}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${boundary}--`;
+    const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method:'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
+      body: multipartBody
+    });
+    if(!res.ok) throw new Error('No se pudo crear la copia en Drive');
+    return res.json();
+  }
+}
+
+/* Sube los datos locales a Drive si son más nuevos que los remotos (o no hay copia aún). */
+async function driveSyncUpload(silent){
+  if(!driveConfigured() || !driveIsConnected() || driveSyncing) return;
+  driveSyncing = true;
+  try{
+    const token = await driveGetToken(true);
+    const remote = await driveFindFile(token);
+    if(remote){
+      const remoteData = await driveDownload(token, remote.id);
+      const remoteModified = (remoteData.settings && remoteData.settings.lastModified) || 0;
+      if(remoteModified > (state.settings.lastModified||0)){
+        // Hay una versión más reciente en Drive: avisar en vez de sobreescribirla
+        driveOfferRemoteUpdate(remoteData);
+        return;
+      }
+      await driveUpload(token, remote.id, state);
+    } else {
+      await driveUpload(token, null, state);
+    }
+    localStorage.setItem('driveLastSync', String(Date.now()));
+    if(!silent) toast('Sincronizado con Google Drive');
+  }catch(e){
+    if(!silent) toast('No se pudo sincronizar: '+e.message);
+  } finally {
+    driveSyncing = false;
+  }
+}
+
+function scheduleDriveUpload(){
+  if(!driveConfigured() || !driveIsConnected()) return;
+  clearTimeout(driveUploadTimer);
+  driveUploadTimer = setTimeout(()=>driveSyncUpload(true), 2500);
+}
+
+function driveOfferRemoteUpdate(remoteData){
+  if(document.getElementById('driveUpdateToast')) return;
+  const t = document.createElement('div');
+  t.id = 'driveUpdateToast';
+  t.className = 'toast show';
+  t.style.cursor = 'pointer';
+  t.textContent = '☁️ Hay cambios más recientes en Drive. Toca para actualizar.';
+  t.onclick = ()=>{
+    t.remove();
+    confirmImportPreview(remoteData, 'la copia de Google Drive');
+  };
+  document.body.appendChild(t);
+}
+
+/* Comprueba Drive al abrir la app (silencioso: no pide inicio de sesión si no hace falta). */
+async function driveCheckOnLoad(){
+  if(!driveConfigured() || !driveIsConnected()) return;
+  try{
+    const token = await driveGetToken(true);
+    const remote = await driveFindFile(token);
+    if(!remote){ return; }
+    const remoteData = await driveDownload(token, remote.id);
+    const remoteModified = (remoteData.settings && remoteData.settings.lastModified) || 0;
+    if(remoteModified > (state.settings.lastModified||0)){
+      driveOfferRemoteUpdate(remoteData);
+    } else if((state.settings.lastModified||0) > remoteModified){
+      await driveUpload(token, remote.id, state);
+      localStorage.setItem('driveLastSync', String(Date.now()));
+    }
+  }catch(e){
+    // silencioso: probablemente no hay sesión activa todavía, no molestamos al usuario
+  }
+}
+
+async function driveConnect(){
+  if(!driveConfigured()){ toast('Todavía no se ha configurado el Client ID de Google'); return; }
+  try{
+    await driveGetToken(false);
+    toast('Conectado con Google Drive');
+    await driveSyncUpload(false);
+    render();
+  }catch(e){
+    toast('No se pudo conectar: '+e.message);
+  }
+}
+function driveDisconnect(){
+  localStorage.removeItem('driveConnected');
+  localStorage.removeItem('driveLastSync');
+  driveAccessToken = null;
+  toast('Desconectado de Google Drive');
+  render();
+}
+
+
 let deferredPrompt=null;
 window.addEventListener('beforeinstallprompt',(e)=>{
   e.preventDefault(); deferredPrompt=e; renderInstallHint();
@@ -1302,6 +1508,7 @@ function renderInstallHint(){
 render();
 checkReminders();
 setInterval(checkReminders, 60000);
+setTimeout(driveCheckOnLoad, 1200);
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
