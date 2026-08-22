@@ -622,7 +622,11 @@ function renderSettings(){
         <div class="settings-title">Sincronización con Google Drive</div>
         <div class="settings-desc">${
           !driveConfigured() ? 'Todavía no configurada'
-          : driveIsConnected() ? ('Conectado' + (localStorage.getItem('driveLastSync') ? ' · última sync ' + new Date(Number(localStorage.getItem('driveLastSync'))).toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}) : ''))
+          : driveIsConnected() ? (
+              localStorage.getItem('driveNeedsReconnect')
+                ? '⚠️ Sesión caducada, pulsa Sincronizar para reconectar'
+                : ('Conectado' + (localStorage.getItem('driveLastSync') ? ' · última sync ' + new Date(Number(localStorage.getItem('driveLastSync'))).toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}) : ''))
+            )
           : 'Mantén tus datos iguales entre dispositivos'
         }</div>
       </div>
@@ -756,7 +760,7 @@ function bindContentEvents(){
   const btnDriveConnect = document.getElementById('btnDriveConnect');
   if(btnDriveConnect) btnDriveConnect.onclick = ()=>{ driveIsConnected() ? driveDisconnect() : driveConnect(); };
   const btnDriveSyncNow = document.getElementById('btnDriveSyncNow');
-  if(btnDriveSyncNow) btnDriveSyncNow.onclick = ()=>driveSyncUpload(false);
+  if(btnDriveSyncNow) btnDriveSyncNow.onclick = ()=>driveSyncUpload({showToast:true, interactive:true});
 }
 
 document.getElementById('fabBtn').onclick = ()=>{
@@ -1355,7 +1359,7 @@ async function driveGetToken(silent){
     client = driveEnsureTokenClient();
     if(!client) throw new Error('No se pudo iniciar el inicio de sesión de Google.');
   }
-  return new Promise((resolve, reject)=>{
+  const request = (promptValue)=> new Promise((resolve, reject)=>{
     client.callback = (resp)=>{
       if(resp.error){ reject(new Error(resp.error)); return; }
       driveAccessToken = resp.access_token;
@@ -1363,8 +1367,15 @@ async function driveGetToken(silent){
       localStorage.setItem('driveConnected','1');
       resolve(driveAccessToken);
     };
-    client.requestAccessToken({ prompt: silent ? '' : 'consent' });
+    client.requestAccessToken({ prompt: promptValue });
   });
+  try{
+    return await request('');
+  }catch(e){
+    if(silent) throw e;
+    // Intento silencioso fallido: pedimos consentimiento explícito como último recurso
+    return await request('consent');
+  }
 }
 
 async function driveFindFile(token){
@@ -1412,11 +1423,15 @@ async function driveUpload(token, fileId, payload){
 }
 
 /* Sube los datos locales a Drive si son más nuevos que los remotos (o no hay copia aún). */
-async function driveSyncUpload(silent){
+async function driveSyncUpload(opts){
+  opts = opts || {};
+  const showToast = !!opts.showToast;
+  const interactive = !!opts.interactive;
   if(!driveConfigured() || !driveIsConnected() || driveSyncing) return;
   driveSyncing = true;
   try{
-    const token = await driveGetToken(true);
+    const token = await driveGetToken(!interactive);
+    localStorage.removeItem('driveNeedsReconnect');
     const remote = await driveFindFile(token);
     if(remote){
       const remoteData = await driveDownload(token, remote.id);
@@ -1431,9 +1446,11 @@ async function driveSyncUpload(silent){
       await driveUpload(token, null, state);
     }
     localStorage.setItem('driveLastSync', String(Date.now()));
-    if(!silent) toast('Sincronizado con Google Drive');
+    if(showToast) toast('Sincronizado con Google Drive');
   }catch(e){
-    if(!silent) toast('No se pudo sincronizar: '+e.message);
+    if(!interactive){ localStorage.setItem('driveNeedsReconnect','1'); }
+    if(showToast) toast('No se pudo sincronizar: '+e.message);
+    if(document.getElementById('content') && ui.tab==='settings') render();
   } finally {
     driveSyncing = false;
   }
@@ -1442,7 +1459,7 @@ async function driveSyncUpload(silent){
 function scheduleDriveUpload(){
   if(!driveConfigured() || !driveIsConnected()) return;
   clearTimeout(driveUploadTimer);
-  driveUploadTimer = setTimeout(()=>driveSyncUpload(true), 2500);
+  driveUploadTimer = setTimeout(()=>driveSyncUpload({showToast:false, interactive:false}), 2500);
 }
 
 function driveOfferRemoteUpdate(remoteData){
@@ -1468,6 +1485,7 @@ async function driveCheckOnLoad(){
   if(!driveConfigured() || !driveIsConnected()) return;
   try{
     const token = await driveGetToken(true);
+    localStorage.removeItem('driveNeedsReconnect');
     const remote = await driveFindFile(token);
     if(!remote){ return; }
     const remoteData = await driveDownload(token, remote.id);
@@ -1479,7 +1497,9 @@ async function driveCheckOnLoad(){
       localStorage.setItem('driveLastSync', String(Date.now()));
     }
   }catch(e){
-    // silencioso: probablemente no hay sesión activa todavía, no molestamos al usuario
+    // La sesión de Google probablemente ha caducado en este dispositivo: lo marcamos
+    // para que Ajustes lo muestre, pero no interrumpimos al usuario con un aviso.
+    localStorage.setItem('driveNeedsReconnect','1');
   }
 }
 
@@ -1487,8 +1507,9 @@ async function driveConnect(){
   if(!driveConfigured()){ toast('Todavía no se ha configurado el Client ID de Google'); return; }
   try{
     await driveGetToken(false);
+    localStorage.removeItem('driveNeedsReconnect');
     toast('Conectado con Google Drive');
-    await driveSyncUpload(false);
+    await driveSyncUpload({showToast:false, interactive:true});
     render();
   }catch(e){
     toast('No se pudo conectar: '+e.message);
@@ -1497,6 +1518,7 @@ async function driveConnect(){
 function driveDisconnect(){
   localStorage.removeItem('driveConnected');
   localStorage.removeItem('driveLastSync');
+  localStorage.removeItem('driveNeedsReconnect');
   driveAccessToken = null;
   toast('Desconectado de Google Drive');
   render();
