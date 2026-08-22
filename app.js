@@ -6,7 +6,7 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-04';
+const APP_VERSION = '2026-08-22-05';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -669,7 +669,7 @@ function renderHolidays(){
         <div class="settings-desc">Admite archivos .json de Mi Horario o exportaciones .sqlite/.db de la app antigua</div>
       </div>
       <button class="settings-action" id="btnImport">Importar</button>
-      <input type="file" id="fileImport" accept=".json,.sqlite,.db,.sqlite3,*/*" style="display:none">
+      <input type="file" id="fileImport" accept=".json,application/json,.sqlite,.db,.sqlite3,application/octet-stream,application/vnd.sqlite3,application/x-sqlite3" style="display:none">
     </div>
   </div>
   <div class="card">
@@ -1629,10 +1629,47 @@ function renderDriveHint(){
   }
 }
 
+/* ---------- Deslizar para cambiar de semana en Calendario ---------- */
+function initSwipeNav(){
+  const content = document.getElementById('content');
+  if(!content) return;
+  let touchStartX = 0, touchStartY = 0, touching = false;
+  content.addEventListener('touchstart', (e)=>{
+    if(ui.tab!=='calendar' || e.touches.length!==1) { touching=false; return; }
+    touching = true;
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+  }, {passive:true});
+  content.addEventListener('touchend', (e)=>{
+    if(!touching || ui.tab!=='calendar') return;
+    touching = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStartX;
+    const dy = t.clientY - touchStartY;
+    if(Math.abs(dx) < 65 || Math.abs(dx) < Math.abs(dy)*1.3) return; // no es un gesto horizontal claro
+
+    // Si el gesto empieza sobre la rejilla semanal (que puede tener su propio scroll
+    // horizontal en pantallas estrechas), solo cambiamos de semana si ya estaba
+    // en el extremo hacia el que se desliza, para no interferir con ese scroll.
+    const scrollArea = content.querySelector('.grid-scrollarea');
+    if(scrollArea && scrollArea.scrollWidth > scrollArea.clientWidth + 4){
+      const atStart = scrollArea.scrollLeft <= 2;
+      const atEnd = scrollArea.scrollLeft >= scrollArea.scrollWidth - scrollArea.clientWidth - 2;
+      if(dx > 0 && !atStart) return;
+      if(dx < 0 && !atEnd) return;
+    }
+
+    const monday = mondayOfWeekISO(ui.weekAnchor);
+    ui.weekAnchor = addDaysISO(monday, dx > 0 ? -7 : 7);
+    render();
+  }, {passive:true});
+}
+
 /* ==================================================================
    INIT
    ================================================================== */
 render();
+initSwipeNav();
 checkReminders();
 setInterval(checkReminders, 60000);
 setTimeout(driveCheckOnLoad, 1200);
