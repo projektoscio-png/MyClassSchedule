@@ -1323,8 +1323,20 @@ let driveUploadTimer = null;
 function driveConfigured(){ return GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID!=='PENDIENTE_CLIENT_ID'; }
 function driveIsConnected(){ return !!localStorage.getItem('driveConnected'); }
 
+function waitForGoogleIdentity(timeoutMs){
+  return new Promise((resolve)=>{
+    const start = Date.now();
+    (function poll(){
+      if(typeof google!=='undefined' && google.accounts && google.accounts.oauth2){ resolve(true); return; }
+      if(Date.now()-start > timeoutMs){ resolve(false); return; }
+      setTimeout(poll, 200);
+    })();
+  });
+}
+
 function driveEnsureTokenClient(){
-  if(driveTokenClient || typeof google==='undefined' || !google.accounts) return driveTokenClient;
+  if(driveTokenClient) return driveTokenClient;
+  if(typeof google==='undefined' || !google.accounts) return null;
   driveTokenClient = google.accounts.oauth2.initTokenClient({
     client_id: GOOGLE_CLIENT_ID,
     scope: DRIVE_SCOPE,
@@ -1333,12 +1345,17 @@ function driveEnsureTokenClient(){
   return driveTokenClient;
 }
 
-function driveGetToken(silent){
+async function driveGetToken(silent){
+  if(!driveConfigured()) throw new Error('Google Drive no está configurado todavía');
+  if(driveAccessToken && Date.now() < driveTokenExpiry - 30000) return driveAccessToken;
+  let client = driveEnsureTokenClient();
+  if(!client){
+    const ready = await waitForGoogleIdentity(6000);
+    if(!ready) throw new Error('No se pudo cargar el inicio de sesión de Google. Comprueba tu conexión a internet e inténtalo de nuevo en unos segundos.');
+    client = driveEnsureTokenClient();
+    if(!client) throw new Error('No se pudo iniciar el inicio de sesión de Google.');
+  }
   return new Promise((resolve, reject)=>{
-    if(!driveConfigured()){ reject(new Error('Google Drive no está configurado todavía')); return; }
-    if(driveAccessToken && Date.now() < driveTokenExpiry - 30000){ resolve(driveAccessToken); return; }
-    const client = driveEnsureTokenClient();
-    if(!client){ reject(new Error('No se pudo cargar el inicio de sesión de Google. Revisa tu conexión.')); return; }
     client.callback = (resp)=>{
       if(resp.error){ reject(new Error(resp.error)); return; }
       driveAccessToken = resp.access_token;
