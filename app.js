@@ -720,6 +720,7 @@ function render(){
   renderHeader();
   renderScheduleNav();
   renderInstallHint();
+  renderDriveHint();
   const content = document.getElementById('content');
   if(ui.tab==='calendar') content.innerHTML = renderSchedule();
   else if(ui.tab==='subjects') content.innerHTML = renderSubjectsList();
@@ -1481,11 +1482,12 @@ async function driveSyncUpload(opts){
     }
     localStorage.setItem('driveLastSync', String(Date.now()));
     if(showToast) toast('Sincronizado con Google Drive');
+    if(document.getElementById('content') && (ui.tab==='settings'||ui.tab==='calendar')) render();
   }catch(e){
     if(!interactive){ localStorage.setItem('driveNeedsReconnect','1'); }
     driveSaveDebug({ error: e.message });
     if(showToast) toast('No se pudo sincronizar: '+e.message);
-    if(document.getElementById('content') && ui.tab==='settings') render();
+    if(document.getElementById('content') && (ui.tab==='settings'||ui.tab==='calendar')) render();
   } finally {
     driveSyncing = false;
   }
@@ -1540,10 +1542,11 @@ async function driveCheckOnLoad(){
     }
   }catch(e){
     // La sesión de Google probablemente ha caducado en este dispositivo: lo marcamos
-    // para que Ajustes lo muestre, pero no interrumpimos al usuario con un aviso.
+    // para que se muestre un aviso, pero no interrumpimos con una ventana emergente.
     localStorage.setItem('driveNeedsReconnect','1');
     driveSaveDebug({ error: e.message });
   }
+  if(document.getElementById('content') && (ui.tab==='settings'||ui.tab==='calendar')) render();
 }
 
 async function driveConnect(){
@@ -1583,6 +1586,23 @@ function renderInstallHint(){
       await deferredPrompt.userChoice;
       deferredPrompt=null; wrap.innerHTML='';
     };
+  } else {
+    wrap.innerHTML='';
+  }
+}
+
+function renderDriveHint(){
+  const wrap = document.getElementById('driveHintWrap');
+  if(!wrap) return;
+  const show = driveConfigured() && driveIsConnected() && localStorage.getItem('driveNeedsReconnect') && ui.tab==='calendar';
+  if(show){
+    wrap.innerHTML = `<div class="drive-hint">${ICONS.cloud}
+      <div style="flex:1">La sincronización con Drive necesita que vuelvas a iniciar sesión.</div>
+      <button id="btnDriveHintSync">Sincronizar</button>
+      <button id="btnDriveHintClose" class="dh-x">${ICONS.x}</button>
+    </div>`;
+    document.getElementById('btnDriveHintSync').onclick=()=>driveSyncUpload({showToast:true, interactive:true});
+    document.getElementById('btnDriveHintClose').onclick=()=>{ localStorage.setItem('driveHintDismissedAt', String(Date.now())); wrap.innerHTML=''; };
   } else {
     wrap.innerHTML='';
   }
