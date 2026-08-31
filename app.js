@@ -6,7 +6,7 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-06';
+const APP_VERSION = '2026-08-22-07';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -41,7 +41,7 @@ let state = loadState();
 let ui = { tab:'calendar', viewMode:'week', day: mondayIndex(new Date()), weekAnchor: todayISO(), subjectFilter:null };
 
 function defaultState(){
-  return { subjects:[], classes:[], items:[], holidays:[], settings:{ notified:[], weekMode:'full', lastModified:0, notificationsEnabled:true } };
+  return { subjects:[], classes:[], items:[], holidays:[], students:[], records:[], settings:{ notified:[], weekMode:'full', lastModified:0, notificationsEnabled:true } };
 }
 function migrateState(st){
   // Compatibilidad con copias antiguas: una clase por día (campo "day") -> varios días en un mismo registro ("days")
@@ -51,6 +51,8 @@ function migrateState(st){
     }
   });
   st.settings = Object.assign({ notified:[], weekMode:'full', lastModified:0, notificationsEnabled:true }, st.settings||{});
+  if(!Array.isArray(st.students)) st.students = [];
+  if(!Array.isArray(st.records)) st.records = [];
   return st;
 }
 function loadState(){
@@ -401,11 +403,12 @@ function renderSubjectsList(){
         .map(sl=>`${sl.days.slice().sort((a,b)=>a-b).map(d=>DOW_SHORT[d]).join('')} ${sl.start}–${sl.end}`)
         .join(' · ');
     }
+    const studentCount = state.students.filter(st=>st.subjectId===s.id).length;
     return `<div class="card subject-row" data-open-subject="${s.id}">
       <span class="subject-dot" style="background:${s.color}"></span>
       <div class="subject-row-main">
         <div class="subject-row-name">${escapeHtml(s.name)}</div>
-        <div class="subject-row-sub">${escapeHtml(subtitle)}</div>
+        <div class="subject-row-sub">${escapeHtml(subtitle)}${studentCount?` · 🧑‍🎓 ${studentCount}`:''}</div>
       </div>
       <span class="subject-row-count">${slots.length}</span>
       ${ICONS.chevR}
@@ -441,6 +444,7 @@ function openSubjectDetailModal(subjectId){
   const subj = getSubject(subjectId);
   if(!subj){ return; }
   const slots = state.classes.filter(c=>c.subjectId===subjectId).sort((a,b)=>timeToMin(a.start)-timeToMin(b.start));
+  const students = state.students.filter(s=>s.subjectId===subjectId).sort((a,b)=>a.name.localeCompare(b.name,'es'));
 
   openModal(`
     <div class="modal-head">
@@ -473,9 +477,38 @@ function openSubjectDetailModal(subjectId){
     </div>
     <button class="btn btn-ghost" id="btnAddSlot">${ICONS.pencil} Añadir tramo horario</button>
     <div style="height:1px;background:var(--line);margin:16px 0;"></div>
+    <div class="field">
+      <label>Alumnos (${students.length})</label>
+      ${students.length ? `<div class="student-chip-list">${students.map(s=>`
+        <div class="student-chip">${escapeHtml(s.name)}<button data-del-student="${s.id}" aria-label="Eliminar">${ICONS.x}</button></div>
+      `).join('')}</div>` : `<div style="font-size:13px;color:var(--ink-faint);">Todavía no hay alumnos en esta clase.</div>`}
+      <div class="btn-row" style="margin-top:10px;">
+        <button class="btn btn-ghost" id="btnAddStudent">${ICONS.pencil} Añadir alumno</button>
+        <button class="btn btn-ghost" id="btnImportCsv" style="margin-top:0">${ICONS.upload} Importar CSV</button>
+      </div>
+      <input type="file" id="csvStudentsInput" accept=".csv,text/csv,text/plain" style="display:none">
+    </div>
+    <button class="btn btn-primary" id="btnDailyRecord" ${students.length===0?'disabled style="opacity:.5;cursor:default;"':''}>${ICONS.clipboard} Registro diario de esta clase</button>
+    <div style="height:1px;background:var(--line);margin:16px 0;"></div>
     <button class="btn btn-ghost" id="btnViewSubjTasks2">${ICONS.clipboard} Ver tareas de esta clase</button>
     <button class="btn btn-danger" id="btnDeleteSubject" style="margin-top:8px;">${ICONS.trash} Eliminar esta clase</button>
   `);
+
+  document.querySelectorAll('[data-del-student]').forEach(el=>{
+    el.onclick=()=>{
+      const sid = el.dataset.delStudent;
+      state.students = state.students.filter(s=>s.id!==sid);
+      state.records = state.records.filter(r=>r.studentId!==sid);
+      saveState(); openSubjectDetailModal(subjectId); toast('Alumno eliminado');
+    };
+  });
+  document.getElementById('btnAddStudent').onclick=()=>openAddStudentModal(subjectId);
+  document.getElementById('btnImportCsv').onclick=()=>document.getElementById('csvStudentsInput').click();
+  document.getElementById('csvStudentsInput').onchange=(e)=>importStudentsCsv(e, subjectId);
+  const btnDaily = document.getElementById('btnDailyRecord');
+  if(students.length){
+    btnDaily.onclick=()=>{ closeModal(); openDailyRecordScreen(subjectId, todayISO(), students[0].id); };
+  }
 
   document.querySelectorAll('[data-open-slot]').forEach(el=>{
     el.onclick=()=>openClassModal(el.dataset.openSlot, { presetSubjectId:subjectId, afterSave:()=>openSubjectDetailModal(subjectId) });
@@ -499,10 +532,252 @@ function openSubjectDetailModal(subjectId){
     document.getElementById('fConfirmDeleteSubject').onclick=()=>{
       state.classes = state.classes.filter(c=>c.subjectId!==subjectId);
       state.items.forEach(i=>{ if(i.subjectId===subjectId) i.subjectId=null; });
+      const studentIds = state.students.filter(s=>s.subjectId===subjectId).map(s=>s.id);
+      state.students = state.students.filter(s=>s.subjectId!==subjectId);
+      state.records = state.records.filter(r=>!studentIds.includes(r.studentId));
       state.subjects = state.subjects.filter(s=>s.id!==subjectId);
       saveState(); closeModal(); render(); toast('Clase eliminada');
     };
   };
+}
+
+/* ==================================================================
+   ALUMNOS Y REGISTRO DIARIO
+   ================================================================== */
+function openAddStudentModal(subjectId){
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Añadir alumno</div>
+      <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+    <div class="field"><label>Nombre del alumno/a</label><input type="text" id="fStudentName" placeholder="Nombre y apellidos"></div>
+    <button class="btn btn-primary" id="fStudentSave">${ICONS.pencil} Añadir</button>
+  `);
+  const inp = document.getElementById('fStudentName');
+  inp.focus();
+  document.getElementById('fStudentSave').onclick=()=>{
+    const name = inp.value.trim();
+    if(!name){ toast('Escribe un nombre'); return; }
+    state.students.push({ id:uid(), subjectId, name });
+    saveState(); closeModal(); openSubjectDetailModal(subjectId); toast('Alumno añadido');
+  };
+  inp.addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('fStudentSave').click(); });
+}
+
+function parseStudentsCsv(text){
+  return text.split(/\r?\n/)
+    .map(line=>line.trim())
+    .filter(Boolean)
+    .map(line=>{
+      // Admite "Nombre,Apellidos" o "Apellidos;Nombre" o una sola columna con el nombre completo
+      const parts = line.split(/[,;\t]/).map(p=>p.trim()).filter(Boolean);
+      return parts.join(' ').replace(/\s+/g,' ').trim();
+    })
+    .filter(name => name && name.toLowerCase() !== 'nombre' && name.toLowerCase() !== 'alumno' && name.toLowerCase()!=='alumno/a');
+}
+
+function importStudentsCsv(e, subjectId){
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    const names = parseStudentsCsv(String(reader.result));
+    if(names.length===0){ toast('No se encontró ningún nombre en el archivo'); e.target.value=''; return; }
+    openModal(`
+      <div class="modal-head"><div class="modal-title">Importar alumnos</div>
+        <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+      <p style="font-size:13.5px;color:var(--ink-soft);line-height:1.5;">Se van a añadir <b>${names.length}</b> alumnos a esta clase:</p>
+      <div style="max-height:200px;overflow-y:auto;background:var(--bg);border-radius:12px;padding:10px 14px;font-size:13px;color:var(--ink);margin-bottom:14px;">
+        ${names.map(n=>escapeHtml(n)).join('<br>')}
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" id="fConfirmCsv" style="margin-top:0">Importar</button>
+      </div>
+    `);
+    document.getElementById('fConfirmCsv').onclick=()=>{
+      names.forEach(name=> state.students.push({ id:uid(), subjectId, name }));
+      saveState(); closeModal(); openSubjectDetailModal(subjectId); toast(`${names.length} alumnos añadidos`);
+    };
+    e.target.value='';
+  };
+  reader.readAsText(file);
+}
+
+const ACTITUD_OPTIONS = [
+  {v:'AV', label:'AV', title:'Una observació'},
+  {v:'2AV', label:'2AV', title:'Dues observacions'},
+  {v:'CC', label:'CC', title:'Una falta lleu'},
+  {v:'2CC', label:'2CC', title:'Dues faltes lleus'},
+  {v:'FG', label:'FG', title:'Falta greu'},
+];
+
+function getOrCreateRecord(studentId, dateIso){
+  let rec = state.records.find(r=>r.studentId===studentId && r.date===dateIso);
+  if(!rec){
+    rec = { id:uid(), studentId, date:dateIso, assistencia:[], actitud:null, actitudNota:'', deures:null, participacio:null, gestio:null, _new:true };
+  }
+  return rec;
+}
+function persistRecord(rec){
+  const isEmpty = rec.assistencia.length===0 && !rec.actitud && !rec.actitudNota.trim() && rec.deures==null && rec.participacio==null && rec.gestio==null;
+  const idx = state.records.findIndex(r=>r.id===rec.id);
+  if(isEmpty){
+    if(idx>=0) state.records.splice(idx,1);
+  } else if(idx>=0){
+    state.records[idx] = rec;
+  } else {
+    delete rec._new;
+    state.records.push(rec);
+  }
+  saveState();
+}
+
+function openDailyRecordScreen(subjectId, dateIso, studentId){
+  const allSubjects = [...state.subjects].sort((a,b)=>a.name.localeCompare(b.name,'es'));
+  const subj = getSubject(subjectId);
+  if(!subj){ return; }
+  const roster = state.students.filter(s=>s.subjectId===subjectId).sort((a,b)=>a.name.localeCompare(b.name,'es'));
+  if(roster.length===0){
+    openModal(`<div class="modal-head"><div class="modal-title">Sin alumnos</div>
+      <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+      <p style="font-size:13.5px;color:var(--ink-soft);">Esta clase todavía no tiene alumnos añadidos.</p>`);
+    return;
+  }
+  let idx = roster.findIndex(s=>s.id===studentId);
+  if(idx<0) idx = 0;
+  const student = roster[idx];
+  const rec = getOrCreateRecord(student.id, dateIso);
+  const subjIdx = allSubjects.findIndex(s=>s.id===subjectId);
+  const dateLabel = capitalize(parseISO(dateIso).toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'short'}));
+
+  const chipRow = (id, options, current, multi)=> `<div class="dr-chips" id="${id}">${options.map(o=>{
+    const val = typeof o==='object' ? o.v : o;
+    const label = typeof o==='object' ? o.label : o;
+    const title = typeof o==='object' ? o.title : '';
+    const active = multi ? current.includes(val) : current===val;
+    return `<button type="button" data-v="${val}" class="${active?'active':''}" title="${escapeHtml(title)}">${label}</button>`;
+  }).join('')}</div>`;
+
+  openModal(`
+    <div class="modal-head">
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="dr-nav-btn" id="drPrevSubject">${ICONS.chevL}</button>
+          <select id="drSubjectSelect" class="dr-subject-select">${allSubjects.map(s=>`<option value="${s.id}" ${s.id===subjectId?'selected':''}>${escapeHtml(s.name)}</option>`).join('')}</select>
+          <button class="dr-nav-btn" id="drNextSubject">${ICONS.chevR}</button>
+        </div>
+      </div>
+      <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button>
+    </div>
+
+    <div class="dr-date-row">
+      <button class="dr-nav-btn" id="drPrevDate">${ICONS.chevL}</button>
+      <input type="date" id="drDate" value="${dateIso}">
+      <button class="dr-nav-btn" id="drNextDate">${ICONS.chevR}</button>
+    </div>
+
+    <input type="text" id="drSearch" class="dr-search" list="drStudentList" placeholder="🔍 Buscar alumno por nombre...">
+    <datalist id="drStudentList">${roster.map(s=>`<option value="${escapeHtml(s.name)}">`).join('')}</datalist>
+
+    <div class="dr-student-header">
+      <div class="dr-student-name">${escapeHtml(student.name)}</div>
+      <div class="dr-student-pos">${idx+1} / ${roster.length} · ${escapeHtml(subj.name)} · ${dateLabel}</div>
+    </div>
+
+    <div class="dr-field">
+      <label>Assistència</label>
+      ${chipRow('drAssist', ['F','R','E'], rec.assistencia, true)}
+    </div>
+    <div class="dr-field">
+      <label>Actitud</label>
+      ${chipRow('drActitud', ACTITUD_OPTIONS, rec.actitud, false)}
+      <textarea id="drActitudNota" placeholder="Justificación (opcional)">${escapeHtml(rec.actitudNota||'')}</textarea>
+    </div>
+    <div class="dr-field">
+      <label>Deures</label>
+      ${chipRow('drDeures', ['0','1','3'], rec.deures==null?'':String(rec.deures), false)}
+    </div>
+    <div class="dr-field">
+      <label>Participació</label>
+      ${chipRow('drPart', ['0','1','2'], rec.participacio==null?'':String(rec.participacio), false)}
+    </div>
+    <div class="dr-field">
+      <label>Gestió</label>
+      ${chipRow('drGestio', ['0','1','2'], rec.gestio==null?'':String(rec.gestio), false)}
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-ghost" id="drPrevStudent" ${idx===0?'disabled style="opacity:.4;"':''}>${ICONS.chevL} Anterior</button>
+      <button class="btn btn-primary" id="drNextStudent" style="margin-top:0" ${idx===roster.length-1?'disabled style="opacity:.4;margin-top:0;"':''}>Siguiente ${ICONS.chevR}</button>
+    </div>
+  `);
+
+  const goTo = (newSubjectId, newDateIso, newStudentId)=>{ closeModal(); openDailyRecordScreen(newSubjectId, newDateIso, newStudentId); };
+
+  document.getElementById('drSubjectSelect').onchange=(e)=>{
+    const ns = state.students.filter(s=>s.subjectId===e.target.value);
+    if(ns.length===0){ toast('Esa clase todavía no tiene alumnos'); e.target.value=subjectId; return; }
+    goTo(e.target.value, dateIso, ns[0].id);
+  };
+  document.getElementById('drPrevSubject').onclick=()=>{
+    if(allSubjects.length<2) return;
+    const ni = (subjIdx-1+allSubjects.length)%allSubjects.length;
+    const ns = state.students.filter(s=>s.subjectId===allSubjects[ni].id);
+    if(ns.length===0){ toast(`"${allSubjects[ni].name}" no tiene alumnos todavía`); return; }
+    goTo(allSubjects[ni].id, dateIso, ns[0].id);
+  };
+  document.getElementById('drNextSubject').onclick=()=>{
+    if(allSubjects.length<2) return;
+    const ni = (subjIdx+1)%allSubjects.length;
+    const ns = state.students.filter(s=>s.subjectId===allSubjects[ni].id);
+    if(ns.length===0){ toast(`"${allSubjects[ni].name}" no tiene alumnos todavía`); return; }
+    goTo(allSubjects[ni].id, dateIso, ns[0].id);
+  };
+
+  document.getElementById('drDate').onchange=(e)=>{ if(e.target.value) goTo(subjectId, e.target.value, student.id); };
+  document.getElementById('drPrevDate').onclick=()=> goTo(subjectId, addDaysISO(dateIso,-1), student.id);
+  document.getElementById('drNextDate').onclick=()=> goTo(subjectId, addDaysISO(dateIso,1), student.id);
+
+  document.getElementById('drSearch').addEventListener('change', (e)=>{
+    const match = roster.find(s=>s.name.toLowerCase()===e.target.value.trim().toLowerCase());
+    if(match) goTo(subjectId, dateIso, match.id);
+  });
+
+  document.getElementById('drPrevStudent').onclick=()=>{ if(idx>0) goTo(subjectId, dateIso, roster[idx-1].id); };
+  document.getElementById('drNextStudent').onclick=()=>{ if(idx<roster.length-1) goTo(subjectId, dateIso, roster[idx+1].id); };
+
+  document.querySelectorAll('#drAssist button').forEach(b=>{
+    b.onclick=()=>{
+      const v = b.dataset.v;
+      if(rec.assistencia.includes(v)) rec.assistencia = rec.assistencia.filter(x=>x!==v);
+      else rec.assistencia.push(v);
+      b.classList.toggle('active');
+      persistRecord(rec);
+    };
+  });
+  document.querySelectorAll('#drActitud button').forEach(b=>{
+    b.onclick=()=>{
+      const v = b.dataset.v;
+      rec.actitud = (rec.actitud===v) ? null : v;
+      document.querySelectorAll('#drActitud button').forEach(x=>x.classList.toggle('active', x===b && rec.actitud===v));
+      persistRecord(rec);
+    };
+  });
+  document.getElementById('drActitudNota').addEventListener('input', (e)=>{ rec.actitudNota = e.target.value; });
+  document.getElementById('drActitudNota').addEventListener('blur', ()=> persistRecord(rec));
+
+  function wireSingleNumeric(containerId, field){
+    document.querySelectorAll(`#${containerId} button`).forEach(b=>{
+      b.onclick=()=>{
+        const v = Number(b.dataset.v);
+        rec[field] = (rec[field]===v) ? null : v;
+        document.querySelectorAll(`#${containerId} button`).forEach(x=>x.classList.toggle('active', x===b && rec[field]===v));
+        persistRecord(rec);
+      };
+    });
+  }
+  wireSingleNumeric('drDeures','deures');
+  wireSingleNumeric('drPart','participacio');
+  wireSingleNumeric('drGestio','gestio');
 }
 
 /* ==================================================================
