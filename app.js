@@ -6,7 +6,7 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-11';
+const APP_VERSION = '2026-08-22-12';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -647,18 +647,19 @@ function persistRecord(rec){
 const ASSIST_LABELS = {F:'Falta', R:'Retard', E:'Expulsió'};
 const ACTITUD_LABELS = {AV:'Avís (AV)', '2AV':'2 avisos (2AV)', CC:'Falta lleu (CC)', '2CC':'2 faltes lleus (2CC)', FG:'Falta greu (FG)'};
 
-function subjectRecordDateRange(subjectId){
-  const studentIds = state.students.filter(s=>s.subjectId===subjectId).map(s=>s.id);
-  const dates = state.records.filter(r=>studentIds.includes(r.studentId)).map(r=>r.date).sort();
-  return { min: dates[0] || todayISO(), max: dates[dates.length-1] || todayISO() };
-}
-
 function openExportRangeModal(subjectId){
-  const allSubjects = [...state.subjects].sort((a,b)=>a.name.localeCompare(b.name,'es'));
+  const allSubjects = [...state.subjects].filter(s=> state.students.some(st=>st.subjectId===s.id)).sort((a,b)=>a.name.localeCompare(b.name,'es'));
+  if(allSubjects.length===0){
+    openModal(`<div class="modal-head"><div class="modal-title">Exportar lista del día</div>
+      <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+      <p style="font-size:13.5px;color:var(--ink-soft);">Todavía no tienes alumnos añadidos en ninguna clase. Ve a Clases → entra en una → Añadir alumno.</p>`);
+    return;
+  }
+  if(!subjectId || !allSubjects.some(s=>s.id===subjectId)) subjectId = allSubjects[0].id;
   openModal(`
     <div class="modal-head"><div class="modal-title">Exportar lista del día</div>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
-    <p style="font-size:13px;color:var(--ink-soft);margin-bottom:14px;">Genera un Excel con una fila por alumno de ese curso, para el día que elijas.</p>
+    <p style="font-size:13px;color:var(--ink-soft);margin-bottom:14px;">Elige la clase y el día. Se generará un Excel con una fila por alumno de ese curso.</p>
     <div class="field">
       <label>Curso</label>
       <select id="expSubject">${allSubjects.map(s=>`<option value="${s.id}" ${s.id===subjectId?'selected':''}>${escapeHtml(s.name)}</option>`).join('')}</select>
@@ -705,45 +706,6 @@ function exportDayXlsx(subjectId, dateIso){
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
   const safeName = subj.name.replace(/[^a-z0-9]+/gi,'_');
   XLSX.writeFile(wb, `registro-${safeName}-${dateIso}.xlsx`);
-  toast('Excel descargado');
-}
-
-function buildRecordRows(subjectId, from, to){
-  const students = state.students.filter(s=>s.subjectId===subjectId).sort((a,b)=>a.name.localeCompare(b.name,'es'));
-  const studentMap = {}; students.forEach(s=>studentMap[s.id]=s.name);
-  const rows = state.records
-    .filter(r=> studentMap[r.studentId] && r.date>=from && r.date<=to)
-    .sort((a,b)=> a.date===b.date ? studentMap[a.studentId].localeCompare(studentMap[b.studentId],'es') : a.date.localeCompare(b.date));
-  return rows.map(r=>({
-    Fecha: r.date,
-    Alumno: studentMap[r.studentId],
-    Assistencia: r.assistencia.map(v=>ASSIST_LABELS[v]||v).join(' + '),
-    Actitud: r.actitud ? (ACTITUD_LABELS[r.actitud]||r.actitud) : '',
-    'Nota actitud': r.actitudNota || '',
-    Deures: r.deures==null ? '' : r.deures,
-    Participacio: r.participacio==null ? '' : r.participacio,
-    Gestio: r.gestio==null ? '' : r.gestio,
-  }));
-}
-
-function exportAllRecordsXlsx(){
-  if(typeof XLSX==='undefined'){ toast('No se pudo cargar el generador de Excel. Revisa tu conexión.'); return; }
-  const subjects = [...state.subjects].sort((a,b)=>a.name.localeCompare(b.name,'es'));
-  const wb = XLSX.utils.book_new();
-  let any = false;
-  subjects.forEach(s=>{
-    const rows = buildRecordRows(s.id, '0000-01-01', '9999-12-31');
-    if(rows.length===0) return;
-    any = true;
-    const ws = XLSX.utils.json_to_sheet(rows);
-    ws['!cols'] = [{wch:11},{wch:24},{wch:14},{wch:16},{wch:28},{wch:8},{wch:12},{wch:8}];
-    let sheetName = s.name.replace(/[\\/*?:\[\]]/g,'').slice(0,31) || 'Clase';
-    let n=1; const used=wb.SheetNames;
-    while(used.includes(sheetName)){ sheetName = (s.name.slice(0,28)+'_'+(++n)); }
-    XLSX.utils.book_append_sheet(wb, ws, sheetName);
-  });
-  if(!any){ toast('No hay ningún dato de registro diario guardado todavía'); return; }
-  XLSX.writeFile(wb, `registro-diario-completo-${todayISO()}.xlsx`);
   toast('Excel descargado');
 }
 
@@ -1078,8 +1040,8 @@ function renderHolidays(){
     <div class="settings-item">
       <div class="settings-icon">${ICONS.clipboard}</div>
       <div class="settings-text">
-        <div class="settings-title">Exportar registro diario (todas las clases)</div>
-        <div class="settings-desc">Un Excel con una hoja por clase: assistència, actitud, deures...</div>
+        <div class="settings-title">Exportar registro diario</div>
+        <div class="settings-desc">Elige clase y día, y descarga un Excel con assistència, actitud, deures...</div>
       </div>
       <button class="settings-action" id="btnExportAllRecords">Exportar</button>
     </div>
@@ -1167,7 +1129,7 @@ function bindContentEvents(){
   const fileImport = document.getElementById('fileImport');
   if(fileImport) fileImport.onchange = importData;
   const btnExportAllRecords = document.getElementById('btnExportAllRecords');
-  if(btnExportAllRecords) btnExportAllRecords.onclick = exportAllRecordsXlsx;
+  if(btnExportAllRecords) btnExportAllRecords.onclick = ()=>openExportRangeModal(null);
   const btnReset = document.getElementById('btnReset');
   if(btnReset) btnReset.onclick = confirmReset;
   const weekModeSeg = document.getElementById('weekModeSeg');
