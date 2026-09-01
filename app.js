@@ -6,7 +6,7 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-08';
+const APP_VERSION = '2026-08-22-09';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -666,14 +666,14 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
 
   openModal(`
     <div class="modal-head">
-      <div style="flex:1;min-width:0;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <button class="dr-nav-btn" id="drPrevSubject">${ICONS.chevL}</button>
-          <select id="drSubjectSelect" class="dr-subject-select">${allSubjects.map(s=>`<option value="${s.id}" ${s.id===subjectId?'selected':''}>${escapeHtml(s.name)}</option>`).join('')}</select>
-          <button class="dr-nav-btn" id="drNextSubject">${ICONS.chevR}</button>
-        </div>
-      </div>
+      <button class="dr-back-btn" id="drBackToClass">${ICONS.chevL} Clase</button>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button>
+    </div>
+
+    <div class="dr-subject-row">
+      <button class="dr-nav-btn" id="drPrevSubject">${ICONS.chevL}</button>
+      <select id="drSubjectSelect" class="dr-subject-select">${allSubjects.map(s=>`<option value="${s.id}" ${s.id===subjectId?'selected':''}>${escapeHtml(s.name)}</option>`).join('')}</select>
+      <button class="dr-nav-btn" id="drNextSubject">${ICONS.chevR}</button>
     </div>
 
     <div class="dr-date-row">
@@ -686,8 +686,12 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
     <datalist id="drStudentList">${roster.map(s=>`<option value="${escapeHtml(s.name)}">`).join('')}</datalist>
 
     <div class="dr-student-header">
-      <div class="dr-student-name">${escapeHtml(student.name)}</div>
-      <div class="dr-student-pos">${idx+1} / ${roster.length} · ${escapeHtml(subj.name)} · ${dateLabel}</div>
+      <button class="dr-nav-btn dr-student-arrow" id="drPrevStudent" ${idx===0?'disabled style="opacity:.3;"':''}>${ICONS.chevL}</button>
+      <div class="dr-student-name-wrap">
+        <div class="dr-student-name">${escapeHtml(student.name)}</div>
+        <div class="dr-student-pos">${idx+1} / ${roster.length} · ${escapeHtml(subj.name)} · ${dateLabel}</div>
+      </div>
+      <button class="dr-nav-btn dr-student-arrow" id="drNextStudent" ${idx===roster.length-1?'disabled style="opacity:.3;"':''}>${ICONS.chevR}</button>
     </div>
 
     <div class="dr-field">
@@ -711,12 +715,9 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
       <label>Gestió</label>
       ${chipRow('drGestio', ['0','1','2'], rec.gestio==null?'':String(rec.gestio), false)}
     </div>
-
-    <div class="btn-row">
-      <button class="btn btn-ghost" id="drPrevStudent" ${idx===0?'disabled style="opacity:.4;"':''}>${ICONS.chevL} Anterior</button>
-      <button class="btn btn-primary" id="drNextStudent" style="margin-top:0" ${idx===roster.length-1?'disabled style="opacity:.4;margin-top:0;"':''}>Siguiente ${ICONS.chevR}</button>
-    </div>
   `);
+
+  document.getElementById('drBackToClass').onclick=()=>{ closeModal(); openSubjectDetailModal(subjectId); };
 
   const goTo = (newSubjectId, newDateIso, newStudentId)=>{ closeModal(); openDailyRecordScreen(newSubjectId, newDateIso, newStudentId); };
 

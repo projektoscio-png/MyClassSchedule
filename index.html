@@ -273,10 +273,17 @@ body{
 }
 .student-list-del svg{width:10px;height:10px;}
 
+.dr-back-btn{
+  background:none; border:none; display:flex; align-items:center; gap:2px; color:var(--primary);
+  font-weight:700; font-size:14.5px; font-family:var(--font-body); cursor:pointer; padding:8px 10px 8px 4px; margin-left:-4px;
+}
+.dr-back-btn svg{width:18px;height:18px;}
 .dr-nav-btn{
-  background:var(--bg); border:1.5px solid var(--line); width:32px; height:32px; border-radius:10px;
+  background:var(--bg); border:1.5px solid var(--line); width:34px; height:34px; border-radius:10px;
   display:flex; align-items:center; justify-content:center; color:var(--ink-soft); cursor:pointer; flex-shrink:0;
 }
+.dr-nav-btn:disabled{opacity:.3; cursor:default;}
+.dr-subject-row{display:flex; align-items:center; gap:8px; margin:4px 0 12px;}
 .dr-subject-select{
   flex:1; min-width:0; padding:8px 10px; border-radius:10px; border:1.5px solid var(--line);
   font-family:var(--font-body); font-weight:700; font-size:14px; color:var(--ink); background:var(--paper);
@@ -287,9 +294,11 @@ body{
   width:100%; padding:10px 13px; border-radius:12px; border:1.5px solid var(--line); background:var(--bg);
   font-family:var(--font-body); font-size:13.5px; margin-bottom:14px;
 }
-.dr-student-header{text-align:center; margin-bottom:16px;}
-.dr-student-name{font-family:var(--font-display); font-size:24px; font-weight:700; color:var(--primary-deep);}
-.dr-student-pos{font-size:12px; color:var(--ink-faint); margin-top:2px;}
+.dr-student-header{display:flex; align-items:center; gap:10px; margin-bottom:18px;}
+.dr-student-arrow{width:38px; height:38px; border-radius:12px;}
+.dr-student-name-wrap{flex:1; min-width:0; text-align:center;}
+.dr-student-name{font-family:var(--font-display); font-size:22px; font-weight:700; color:var(--primary-deep); overflow-wrap:break-word;}
+.dr-student-pos{font-size:11.5px; color:var(--ink-faint); margin-top:2px;}
 .dr-field{margin-bottom:16px;}
 .dr-field label{display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:8px; letter-spacing:.02em;}
 .dr-field textarea{
@@ -409,6 +418,7 @@ body{
   max-height:88vh; overflow-y:auto;
   transform:translateY(24px); transition:.22s;
   box-shadow:0 -10px 40px rgba(0,0,0,0.2);
+  touch-action: pan-y;
 }
 .modal-overlay.open .modal-sheet{transform:translateY(0);}
 .modal-handle{width:40px;height:4px;background:var(--line);border-radius:3px;margin:0 auto 14px;}
