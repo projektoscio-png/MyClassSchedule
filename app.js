@@ -6,7 +6,7 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-07';
+const APP_VERSION = '2026-08-22-08';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -479,8 +479,11 @@ function openSubjectDetailModal(subjectId){
     <div style="height:1px;background:var(--line);margin:16px 0;"></div>
     <div class="field">
       <label>Alumnos (${students.length})</label>
-      ${students.length ? `<div class="student-chip-list">${students.map(s=>`
-        <div class="student-chip">${escapeHtml(s.name)}<button data-del-student="${s.id}" aria-label="Eliminar">${ICONS.x}</button></div>
+      ${students.length ? `<div class="student-list">${students.map(s=>`
+        <div class="student-list-row" data-open-student="${s.id}">
+          <span class="student-list-name">${escapeHtml(s.name)}</span>
+          <button data-del-student="${s.id}" aria-label="Eliminar" class="student-list-del">${ICONS.x}</button>
+        </div>
       `).join('')}</div>` : `<div style="font-size:13px;color:var(--ink-faint);">Todavía no hay alumnos en esta clase.</div>`}
       <div class="btn-row" style="margin-top:10px;">
         <button class="btn btn-ghost" id="btnAddStudent">${ICONS.pencil} Añadir alumno</button>
@@ -495,12 +498,16 @@ function openSubjectDetailModal(subjectId){
   `);
 
   document.querySelectorAll('[data-del-student]').forEach(el=>{
-    el.onclick=()=>{
+    el.onclick=(e)=>{
+      e.stopPropagation();
       const sid = el.dataset.delStudent;
       state.students = state.students.filter(s=>s.id!==sid);
       state.records = state.records.filter(r=>r.studentId!==sid);
       saveState(); openSubjectDetailModal(subjectId); toast('Alumno eliminado');
     };
+  });
+  document.querySelectorAll('[data-open-student]').forEach(el=>{
+    el.onclick=()=>{ closeModal(); openDailyRecordScreen(subjectId, todayISO(), el.dataset.openStudent); };
   });
   document.getElementById('btnAddStudent').onclick=()=>openAddStudentModal(subjectId);
   document.getElementById('btnImportCsv').onclick=()=>document.getElementById('csvStudentsInput').click();
