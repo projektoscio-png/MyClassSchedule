@@ -6,7 +6,7 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-09';
+const APP_VERSION = '2026-08-22-10';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -492,6 +492,7 @@ function openSubjectDetailModal(subjectId){
       <input type="file" id="csvStudentsInput" accept=".csv,text/csv,text/plain" style="display:none">
     </div>
     <button class="btn btn-primary" id="btnDailyRecord" ${students.length===0?'disabled style="opacity:.5;cursor:default;"':''}>${ICONS.clipboard} Registro diario de esta clase</button>
+    <button class="btn btn-ghost" id="btnExportRecord" style="margin-top:8px;" ${students.length===0?'disabled style="opacity:.5;cursor:default;margin-top:8px;"':''}>${ICONS.download} Exportar registro a Excel</button>
     <div style="height:1px;background:var(--line);margin:16px 0;"></div>
     <button class="btn btn-ghost" id="btnViewSubjTasks2">${ICONS.clipboard} Ver tareas de esta clase</button>
     <button class="btn btn-danger" id="btnDeleteSubject" style="margin-top:8px;">${ICONS.trash} Eliminar esta clase</button>
@@ -515,6 +516,10 @@ function openSubjectDetailModal(subjectId){
   const btnDaily = document.getElementById('btnDailyRecord');
   if(students.length){
     btnDaily.onclick=()=>{ closeModal(); openDailyRecordScreen(subjectId, todayISO(), students[0].id); };
+  }
+  const btnExport = document.getElementById('btnExportRecord');
+  if(students.length){
+    btnExport.onclick=()=>openExportRangeModal(subjectId);
   }
 
   document.querySelectorAll('[data-open-slot]').forEach(el=>{
@@ -636,6 +641,91 @@ function persistRecord(rec){
     state.records.push(rec);
   }
   saveState();
+}
+
+/* ---------- Exportar registro diario a Excel ---------- */
+const ASSIST_LABELS = {F:'Falta', R:'Retard', E:'Expulsió'};
+const ACTITUD_LABELS = {AV:'Avís (AV)', '2AV':'2 avisos (2AV)', CC:'Falta lleu (CC)', '2CC':'2 faltes lleus (2CC)', FG:'Falta greu (FG)'};
+
+function subjectRecordDateRange(subjectId){
+  const studentIds = state.students.filter(s=>s.subjectId===subjectId).map(s=>s.id);
+  const dates = state.records.filter(r=>studentIds.includes(r.studentId)).map(r=>r.date).sort();
+  return { min: dates[0] || todayISO(), max: dates[dates.length-1] || todayISO() };
+}
+
+function openExportRangeModal(subjectId){
+  const subj = getSubject(subjectId);
+  const range = subjectRecordDateRange(subjectId);
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Exportar registro</div>
+      <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+    <p style="font-size:13px;color:var(--ink-soft);margin-bottom:14px;">Se exportará el registro diario de <b>${escapeHtml(subj.name)}</b> como un archivo Excel (.xlsx), con una fila por alumno y día.</p>
+    <div class="row2">
+      <div class="field"><label>Desde</label><input type="date" id="expFrom" value="${range.min}"></div>
+      <div class="field"><label>Hasta</label><input type="date" id="expTo" value="${range.max}"></div>
+    </div>
+    <button class="btn btn-primary" id="expGo">${ICONS.download} Descargar Excel</button>
+  `);
+  document.getElementById('expGo').onclick=()=>{
+    const from = document.getElementById('expFrom').value;
+    const to = document.getElementById('expTo').value;
+    if(!from || !to){ toast('Indica las dos fechas'); return; }
+    exportSubjectRecordsXlsx(subjectId, from, to);
+    closeModal();
+  };
+}
+
+function buildRecordRows(subjectId, from, to){
+  const students = state.students.filter(s=>s.subjectId===subjectId).sort((a,b)=>a.name.localeCompare(b.name,'es'));
+  const studentMap = {}; students.forEach(s=>studentMap[s.id]=s.name);
+  const rows = state.records
+    .filter(r=> studentMap[r.studentId] && r.date>=from && r.date<=to)
+    .sort((a,b)=> a.date===b.date ? studentMap[a.studentId].localeCompare(studentMap[b.studentId],'es') : a.date.localeCompare(b.date));
+  return rows.map(r=>({
+    Fecha: r.date,
+    Alumno: studentMap[r.studentId],
+    Assistencia: r.assistencia.map(v=>ASSIST_LABELS[v]||v).join(' + '),
+    Actitud: r.actitud ? (ACTITUD_LABELS[r.actitud]||r.actitud) : '',
+    'Nota actitud': r.actitudNota || '',
+    Deures: r.deures==null ? '' : r.deures,
+    Participacio: r.participacio==null ? '' : r.participacio,
+    Gestio: r.gestio==null ? '' : r.gestio,
+  }));
+}
+
+function exportSubjectRecordsXlsx(subjectId, from, to){
+  if(typeof XLSX==='undefined'){ toast('No se pudo cargar el generador de Excel. Revisa tu conexión.'); return; }
+  const subj = getSubject(subjectId);
+  const rows = buildRecordRows(subjectId, from, to);
+  if(rows.length===0){ toast('No hay ningún dato registrado en ese periodo'); return; }
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws['!cols'] = [{wch:11},{wch:24},{wch:14},{wch:16},{wch:28},{wch:8},{wch:12},{wch:8}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Registro');
+  const safeName = subj.name.replace(/[^a-z0-9]+/gi,'_');
+  XLSX.writeFile(wb, `registro-${safeName}-${from}_a_${to}.xlsx`);
+  toast('Excel descargado');
+}
+
+function exportAllRecordsXlsx(){
+  if(typeof XLSX==='undefined'){ toast('No se pudo cargar el generador de Excel. Revisa tu conexión.'); return; }
+  const subjects = [...state.subjects].sort((a,b)=>a.name.localeCompare(b.name,'es'));
+  const wb = XLSX.utils.book_new();
+  let any = false;
+  subjects.forEach(s=>{
+    const rows = buildRecordRows(s.id, '0000-01-01', '9999-12-31');
+    if(rows.length===0) return;
+    any = true;
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{wch:11},{wch:24},{wch:14},{wch:16},{wch:28},{wch:8},{wch:12},{wch:8}];
+    let sheetName = s.name.replace(/[\\/*?:\[\]]/g,'').slice(0,31) || 'Clase';
+    let n=1; const used=wb.SheetNames;
+    while(used.includes(sheetName)){ sheetName = (s.name.slice(0,28)+'_'+(++n)); }
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  });
+  if(!any){ toast('No hay ningún dato de registro diario guardado todavía'); return; }
+  XLSX.writeFile(wb, `registro-diario-completo-${todayISO()}.xlsx`);
+  toast('Excel descargado');
 }
 
 function openDailyRecordScreen(subjectId, dateIso, studentId){
@@ -965,6 +1055,15 @@ function renderHolidays(){
       <button class="settings-action" id="btnImport">Importar</button>
       <input type="file" id="fileImport" accept=".json,application/json,.sqlite,.db,.sqlite3,application/octet-stream,application/vnd.sqlite3,application/x-sqlite3" style="display:none">
     </div>
+    <div style="height:1px;background:var(--line)"></div>
+    <div class="settings-item">
+      <div class="settings-icon">${ICONS.clipboard}</div>
+      <div class="settings-text">
+        <div class="settings-title">Exportar registro diario (todas las clases)</div>
+        <div class="settings-desc">Un Excel con una hoja por clase: assistència, actitud, deures...</div>
+      </div>
+      <button class="settings-action" id="btnExportAllRecords">Exportar</button>
+    </div>
   </div>
   <div class="card">
     <div class="settings-item">
@@ -1048,6 +1147,8 @@ function bindContentEvents(){
   if(btnImport) btnImport.onclick = ()=>document.getElementById('fileImport').click();
   const fileImport = document.getElementById('fileImport');
   if(fileImport) fileImport.onchange = importData;
+  const btnExportAllRecords = document.getElementById('btnExportAllRecords');
+  if(btnExportAllRecords) btnExportAllRecords.onclick = exportAllRecordsXlsx;
   const btnReset = document.getElementById('btnReset');
   if(btnReset) btnReset.onclick = confirmReset;
   const weekModeSeg = document.getElementById('weekModeSeg');
