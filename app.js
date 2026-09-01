@@ -6,7 +6,7 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-12';
+const APP_VERSION = '2026-08-22-14';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -644,8 +644,6 @@ function persistRecord(rec){
 }
 
 /* ---------- Exportar registro diario a Excel ---------- */
-const ASSIST_LABELS = {F:'Falta', R:'Retard', E:'Expulsió'};
-const ACTITUD_LABELS = {AV:'Avís (AV)', '2AV':'2 avisos (2AV)', CC:'Falta lleu (CC)', '2CC':'2 faltes lleus (2CC)', FG:'Falta greu (FG)'};
 
 function openExportRangeModal(subjectId){
   const allSubjects = [...state.subjects].filter(s=> state.students.some(st=>st.subjectId===s.id)).sort((a,b)=>a.name.localeCompare(b.name,'es'));
@@ -656,6 +654,7 @@ function openExportRangeModal(subjectId){
     return;
   }
   if(!subjectId || !allSubjects.some(s=>s.id===subjectId)) subjectId = allSubjects[0].id;
+
   openModal(`
     <div class="modal-head"><div class="modal-title">Exportar lista del día</div>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
@@ -670,6 +669,7 @@ function openExportRangeModal(subjectId){
     </div>
     <button class="btn btn-primary" id="expGo">${ICONS.download} Descargar Excel</button>
   `);
+
   document.getElementById('expGo').onclick=()=>{
     const sid = document.getElementById('expSubject').value;
     const day = document.getElementById('expDay').value;
@@ -685,8 +685,8 @@ function buildDayRows(subjectId, dateIso){
     const rec = state.records.find(r=>r.studentId===s.id && r.date===dateIso);
     return {
       'Alumnes': s.name,
-      'Astc.': rec ? rec.assistencia.map(v=>ASSIST_LABELS[v]||v).join(' + ') : '',
-      'Actitud': rec && rec.actitud ? (ACTITUD_LABELS[rec.actitud]||rec.actitud) : '',
+      'Astc.': rec ? rec.assistencia.join(' + ') : '',
+      'Actitud': rec && rec.actitud ? rec.actitud : '',
       'Deures': rec && rec.deures!=null ? rec.deures : '',
       'Participació': rec && rec.participacio!=null ? rec.participacio : '',
       'Gestió': rec && rec.gestio!=null ? rec.gestio : '',
@@ -699,6 +699,7 @@ function exportDayXlsx(subjectId, dateIso){
   const subj = getSubject(subjectId);
   const rows = buildDayRows(subjectId, dateIso);
   if(rows.length===0){ toast('Ese curso todavía no tiene alumnos'); return; }
+  const hasAnyData = rows.some(r=> r['Astc.'] || r['Actitud'] || r['Deures']!=='' || r['Participació']!=='' || r['Gestió']!=='');
   const ws = XLSX.utils.json_to_sheet(rows);
   ws['!cols'] = [{wch:26},{wch:16},{wch:16},{wch:8},{wch:12},{wch:8}];
   const wb = XLSX.utils.book_new();
@@ -706,9 +707,9 @@ function exportDayXlsx(subjectId, dateIso){
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
   const safeName = subj.name.replace(/[^a-z0-9]+/gi,'_');
   XLSX.writeFile(wb, `registro-${safeName}-${dateIso}.xlsx`);
-  toast('Excel descargado');
+  if(hasAnyData){ toast('Excel descargado'); }
+  else { toast(`Excel descargado, pero no había ningún dato registrado el ${parseISO(dateIso).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'})} en esta clase`); }
 }
-
 function openDailyRecordScreen(subjectId, dateIso, studentId){
   const allSubjects = [...state.subjects].sort((a,b)=>a.name.localeCompare(b.name,'es'));
   const subj = getSubject(subjectId);
@@ -767,7 +768,7 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
 
     <div class="dr-field">
       <label>Assistència</label>
-      ${chipRow('drAssist', ['F','R','E'], rec.assistencia, true)}
+      ${chipRow('drAssist', ['F','R','J','E'], rec.assistencia, true)}
     </div>
     <div class="dr-field">
       <label>Actitud</label>
