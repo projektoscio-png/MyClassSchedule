@@ -6,7 +6,7 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-10';
+const APP_VERSION = '2026-08-22-11';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -654,25 +654,58 @@ function subjectRecordDateRange(subjectId){
 }
 
 function openExportRangeModal(subjectId){
-  const subj = getSubject(subjectId);
-  const range = subjectRecordDateRange(subjectId);
+  const allSubjects = [...state.subjects].sort((a,b)=>a.name.localeCompare(b.name,'es'));
   openModal(`
-    <div class="modal-head"><div class="modal-title">Exportar registro</div>
+    <div class="modal-head"><div class="modal-title">Exportar lista del día</div>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
-    <p style="font-size:13px;color:var(--ink-soft);margin-bottom:14px;">Se exportará el registro diario de <b>${escapeHtml(subj.name)}</b> como un archivo Excel (.xlsx), con una fila por alumno y día.</p>
-    <div class="row2">
-      <div class="field"><label>Desde</label><input type="date" id="expFrom" value="${range.min}"></div>
-      <div class="field"><label>Hasta</label><input type="date" id="expTo" value="${range.max}"></div>
+    <p style="font-size:13px;color:var(--ink-soft);margin-bottom:14px;">Genera un Excel con una fila por alumno de ese curso, para el día que elijas.</p>
+    <div class="field">
+      <label>Curso</label>
+      <select id="expSubject">${allSubjects.map(s=>`<option value="${s.id}" ${s.id===subjectId?'selected':''}>${escapeHtml(s.name)}</option>`).join('')}</select>
+    </div>
+    <div class="field">
+      <label>Día</label>
+      <input type="date" id="expDay" value="${todayISO()}">
     </div>
     <button class="btn btn-primary" id="expGo">${ICONS.download} Descargar Excel</button>
   `);
   document.getElementById('expGo').onclick=()=>{
-    const from = document.getElementById('expFrom').value;
-    const to = document.getElementById('expTo').value;
-    if(!from || !to){ toast('Indica las dos fechas'); return; }
-    exportSubjectRecordsXlsx(subjectId, from, to);
+    const sid = document.getElementById('expSubject').value;
+    const day = document.getElementById('expDay').value;
+    if(!day){ toast('Indica un día'); return; }
+    exportDayXlsx(sid, day);
     closeModal();
   };
+}
+
+function buildDayRows(subjectId, dateIso){
+  const students = state.students.filter(s=>s.subjectId===subjectId).sort((a,b)=>a.name.localeCompare(b.name,'es'));
+  return students.map(s=>{
+    const rec = state.records.find(r=>r.studentId===s.id && r.date===dateIso);
+    return {
+      'Alumnes': s.name,
+      'Astc.': rec ? rec.assistencia.map(v=>ASSIST_LABELS[v]||v).join(' + ') : '',
+      'Actitud': rec && rec.actitud ? (ACTITUD_LABELS[rec.actitud]||rec.actitud) : '',
+      'Deures': rec && rec.deures!=null ? rec.deures : '',
+      'Participació': rec && rec.participacio!=null ? rec.participacio : '',
+      'Gestió': rec && rec.gestio!=null ? rec.gestio : '',
+    };
+  });
+}
+
+function exportDayXlsx(subjectId, dateIso){
+  if(typeof XLSX==='undefined'){ toast('No se pudo cargar el generador de Excel. Revisa tu conexión.'); return; }
+  const subj = getSubject(subjectId);
+  const rows = buildDayRows(subjectId, dateIso);
+  if(rows.length===0){ toast('Ese curso todavía no tiene alumnos'); return; }
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws['!cols'] = [{wch:26},{wch:16},{wch:16},{wch:8},{wch:12},{wch:8}];
+  const wb = XLSX.utils.book_new();
+  const sheetName = (subj.name.replace(/[\\/*?:\[\]]/g,'').slice(0,31)) || 'Registro';
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const safeName = subj.name.replace(/[^a-z0-9]+/gi,'_');
+  XLSX.writeFile(wb, `registro-${safeName}-${dateIso}.xlsx`);
+  toast('Excel descargado');
 }
 
 function buildRecordRows(subjectId, from, to){
@@ -691,20 +724,6 @@ function buildRecordRows(subjectId, from, to){
     Participacio: r.participacio==null ? '' : r.participacio,
     Gestio: r.gestio==null ? '' : r.gestio,
   }));
-}
-
-function exportSubjectRecordsXlsx(subjectId, from, to){
-  if(typeof XLSX==='undefined'){ toast('No se pudo cargar el generador de Excel. Revisa tu conexión.'); return; }
-  const subj = getSubject(subjectId);
-  const rows = buildRecordRows(subjectId, from, to);
-  if(rows.length===0){ toast('No hay ningún dato registrado en ese periodo'); return; }
-  const ws = XLSX.utils.json_to_sheet(rows);
-  ws['!cols'] = [{wch:11},{wch:24},{wch:14},{wch:16},{wch:28},{wch:8},{wch:12},{wch:8}];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Registro');
-  const safeName = subj.name.replace(/[^a-z0-9]+/gi,'_');
-  XLSX.writeFile(wb, `registro-${safeName}-${from}_a_${to}.xlsx`);
-  toast('Excel descargado');
 }
 
 function exportAllRecordsXlsx(){
