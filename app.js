@@ -6,7 +6,7 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-14';
+const APP_VERSION = '2026-08-22-15';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1194,7 +1194,7 @@ function openClassOccurrenceModal(classId, dateIso){
   dateIso = dateIso || todayISO();
   const subj = getSubject(cls.subjectId);
   const obsList = state.items
-    .filter(i=>i.type==='task' && i.subjectId===cls.subjectId && i.date===dateIso)
+    .filter(i=>i.type==='task' && i.subjectId===cls.subjectId && i.date===dateIso && (i.classId ? i.classId===classId : true))
     .sort((a,b)=>(a.createdOrder||0)-(b.createdOrder||0));
   const dateLabel = dateIso ? capitalize(parseISO(dateIso).toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'long', year:'numeric'})) : '';
 
@@ -1261,7 +1261,7 @@ function openObservationModal(id, subjectId, dateIso, classId){
     if(existing){
       Object.assign(existing, {title, notes:text});
     } else {
-      state.items.push({ id:uid(), type:'task', title, date:dateIso, time:'', notes:text, remindDays:0, subjectId, notified:true });
+      state.items.push({ id:uid(), type:'task', title, date:dateIso, time:'', notes:text, remindDays:0, subjectId, classId, notified:true });
     }
     saveState(); toast('Observación guardada'); render();
     openClassOccurrenceModal(classId, dateIso);
