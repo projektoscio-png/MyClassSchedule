@@ -6,7 +6,7 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-15';
+const APP_VERSION = '2026-08-22-16';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -277,7 +277,7 @@ function renderScheduleDay(){
       const df = iso=> iso ? parseISO(iso).toLocaleDateString('es-ES',{day:'numeric',month:'short'}) : '…';
       periodLabel = `📅 ${df(c.dateStart)} – ${df(c.dateEnd)}`;
     }
-    const hasObs = state.items.some(i=>i.type==='task' && i.subjectId===c.subjectId && i.date===dateIso);
+    const hasObs = state.items.some(i=>i.type==='task' && i.subjectId===c.subjectId && i.date===dateIso && (i.classId ? i.classId===c.id : true));
     return `<div class="card class-card" data-open-class="${c.id}" data-date="${dateIso}">
       <div class="class-bar" style="background:${color}"></div>
       <div class="class-body">
@@ -348,7 +348,7 @@ function renderScheduleWeekGrid(){
       const s=timeToMin(c.start), e=Math.max(timeToMin(c.end), s+20);
       const top = ((s-minStart)/totalMin)*gridHeight;
       const height = Math.max(((e-s)/totalMin)*gridHeight, 22);
-      const hasObs = state.items.some(it=>it.type==='task' && it.subjectId===c.subjectId && it.date===dateIso);
+      const hasObs = state.items.some(it=>it.type==='task' && it.subjectId===c.subjectId && it.date===dateIso && (it.classId ? it.classId===c.id : true));
       return `<div class="grid-block" data-open-class="${c.id}" data-date="${dateIso}" style="top:${top}px;height:${height}px;background:${color}26;border-left:3px solid ${color};">
         ${hasObs?'<div class="grid-block-obs">📝</div>':''}
         <div class="grid-block-name">${escapeHtml(subj?subj.name:'')}</div>
