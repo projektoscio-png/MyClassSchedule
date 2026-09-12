@@ -6,7 +6,7 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-18';
+const APP_VERSION = '2026-08-22-19';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -504,7 +504,7 @@ function openSubjectDetailModal(subjectId){
       const sid = el.dataset.delStudent;
       state.students = state.students.filter(s=>s.id!==sid);
       state.records = state.records.filter(r=>r.studentId!==sid);
-      saveState(); openSubjectDetailModal(subjectId); toast('Alumno eliminado');
+      saveState(); render(); openSubjectDetailModal(subjectId); toast('Alumno eliminado');
     };
   });
   document.querySelectorAll('[data-open-student]').forEach(el=>{
@@ -575,7 +575,7 @@ function openAddStudentModal(subjectId){
     if(!surname && !firstname){ toast('Escribe al menos el nombre o los apellidos'); return; }
     const name = surname && firstname ? `${surname}, ${firstname}` : (surname || firstname);
     state.students.push({ id:uid(), subjectId, name });
-    saveState(); closeModal(); openSubjectDetailModal(subjectId); toast('Alumno añadido');
+    saveState(); render(); closeModal(); openSubjectDetailModal(subjectId); toast('Alumno añadido');
   };
   [inpSur, inpName].forEach(el=> el.addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('fStudentSave').click(); }));
 }
@@ -638,7 +638,7 @@ function importStudentsCsv(e, subjectId){
     `);
     document.getElementById('fConfirmCsv').onclick=()=>{
       names.forEach(name=> state.students.push({ id:uid(), subjectId, name }));
-      saveState(); closeModal(); openSubjectDetailModal(subjectId); toast(`${names.length} alumnos añadidos`);
+      saveState(); render(); closeModal(); openSubjectDetailModal(subjectId); toast(`${names.length} alumnos añadidos`);
     };
     e.target.value='';
   };
