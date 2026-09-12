@@ -6,7 +6,7 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-16';
+const APP_VERSION = '2026-08-22-18';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -560,18 +560,47 @@ function openAddStudentModal(subjectId){
   openModal(`
     <div class="modal-head"><div class="modal-title">Añadir alumno</div>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
-    <div class="field"><label>Nombre del alumno/a</label><input type="text" id="fStudentName" placeholder="Nombre y apellidos"></div>
+    <div class="row2">
+      <div class="field"><label>Apellidos</label><input type="text" id="fStudentSurname" placeholder="Ghailany"></div>
+      <div class="field"><label>Nombre</label><input type="text" id="fStudentFirstname" placeholder="Chams"></div>
+    </div>
     <button class="btn btn-primary" id="fStudentSave">${ICONS.pencil} Añadir</button>
   `);
-  const inp = document.getElementById('fStudentName');
-  inp.focus();
+  const inpSur = document.getElementById('fStudentSurname');
+  const inpName = document.getElementById('fStudentFirstname');
+  inpSur.focus();
   document.getElementById('fStudentSave').onclick=()=>{
-    const name = inp.value.trim();
-    if(!name){ toast('Escribe un nombre'); return; }
+    const surname = inpSur.value.trim();
+    const firstname = inpName.value.trim();
+    if(!surname && !firstname){ toast('Escribe al menos el nombre o los apellidos'); return; }
+    const name = surname && firstname ? `${surname}, ${firstname}` : (surname || firstname);
     state.students.push({ id:uid(), subjectId, name });
     saveState(); closeModal(); openSubjectDetailModal(subjectId); toast('Alumno añadido');
   };
-  inp.addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('fStudentSave').click(); });
+  [inpSur, inpName].forEach(el=> el.addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('fStudentSave').click(); }));
+}
+
+function splitCsvLine(line){
+  // Divide una línea respetando las comillas del CSV: un campo "así, con coma"
+  // no se corta por dentro aunque contenga comas.
+  const result = [];
+  let cur = '';
+  let inQuotes = false;
+  for(let i=0; i<line.length; i++){
+    const c = line[i];
+    if(inQuotes){
+      if(c === '"'){
+        if(line[i+1] === '"'){ cur += '"'; i++; }
+        else { inQuotes = false; }
+      } else { cur += c; }
+    } else {
+      if(c === '"'){ inQuotes = true; }
+      else if(c === ',' || c === ';' || c === '\t'){ result.push(cur); cur=''; }
+      else { cur += c; }
+    }
+  }
+  result.push(cur);
+  return result.map(p=>p.trim()).filter(Boolean);
 }
 
 function parseStudentsCsv(text){
@@ -579,11 +608,13 @@ function parseStudentsCsv(text){
     .map(line=>line.trim())
     .filter(Boolean)
     .map(line=>{
-      // Admite "Nombre,Apellidos" o "Apellidos;Nombre" o una sola columna con el nombre completo
-      const parts = line.split(/[,;\t]/).map(p=>p.trim()).filter(Boolean);
+      // Dos columnas -> se interpretan como "Apellidos,Nombre" y se guardan como "Apellidos, Nombre".
+      // Una sola columna (aunque ya contenga una coma protegida entre comillas) -> se deja tal cual.
+      const parts = splitCsvLine(line);
+      if(parts.length===2) return `${parts[0]}, ${parts[1]}`;
       return parts.join(' ').replace(/\s+/g,' ').trim();
     })
-    .filter(name => name && name.toLowerCase() !== 'nombre' && name.toLowerCase() !== 'alumno' && name.toLowerCase()!=='alumno/a');
+    .filter(name => name && name.toLowerCase() !== 'nombre' && name.toLowerCase() !== 'alumno' && name.toLowerCase()!=='alumno/a' && name.toLowerCase()!=='apellidos, nombre');
 }
 
 function importStudentsCsv(e, subjectId){
