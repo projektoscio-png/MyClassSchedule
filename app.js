@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-25';
+const APP_VERSION = '2026-08-22-27';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -278,14 +278,15 @@ function renderScheduleDay(){
       const df = iso=> iso ? parseISO(iso).toLocaleDateString('es-ES',{day:'numeric',month:'short'}) : '…';
       periodLabel = `📅 ${df(c.dateStart)} – ${df(c.dateEnd)}`;
     }
-    const hasObs = state.items.some(i=>i.type==='task' && i.subjectId===c.subjectId && i.date===dateIso && (i.classId ? i.classId===c.id : true));
+    const hasObs = state.items.some(i=>i.type==='task' && (i.kind==='observacion'||!i.kind) && i.subjectId===c.subjectId && i.date===dateIso && (i.classId ? i.classId===c.id : true));
+    const hasDeb = state.items.some(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===c.subjectId && i.date===dateIso && (i.classId ? i.classId===c.id : true));
     const hasExam = state.items.some(i=>i.type==='exam' && i.subjectId===c.subjectId && i.date===dateIso && (i.classId ? i.classId===c.id : true));
     return `<div class="card class-card" data-open-class="${c.id}" data-date="${dateIso}">
       <div class="class-bar" style="background:${color}"></div>
       <div class="class-body">
         <div class="class-time">${c.start}<small>${c.end}</small></div>
         <div class="class-info">
-          <div class="class-name">${escapeHtml(subj?subj.name:'(sin nombre)')} ${hasExam?'📕':''}${hasObs?'📝':''}</div>
+          <div class="class-name">${escapeHtml(subj?subj.name:'(sin nombre)')} ${hasExam?'📕':`${hasDeb?'📚':''}${hasObs?'📝':''}`}</div>
           <div class="class-meta">${metaParts.join(' · ')||'&nbsp;'}</div>
           ${periodLabel?`<div class="class-meta" style="color:var(--primary)">${periodLabel}</div>`:''}
         </div>
@@ -350,10 +351,11 @@ function renderScheduleWeekGrid(){
       const s=timeToMin(c.start), e=Math.max(timeToMin(c.end), s+20);
       const top = ((s-minStart)/totalMin)*gridHeight;
       const height = Math.max(((e-s)/totalMin)*gridHeight, 22);
-      const hasObs = state.items.some(it=>it.type==='task' && it.subjectId===c.subjectId && it.date===dateIso && (it.classId ? it.classId===c.id : true));
+      const hasObs = state.items.some(it=>it.type==='task' && (it.kind==='observacion'||!it.kind) && it.subjectId===c.subjectId && it.date===dateIso && (it.classId ? it.classId===c.id : true));
+      const hasDeb = state.items.some(it=>it.type==='task' && it.kind==='deberes' && it.subjectId===c.subjectId && it.date===dateIso && (it.classId ? it.classId===c.id : true));
       const hasExam = state.items.some(it=>it.type==='exam' && it.subjectId===c.subjectId && it.date===dateIso && (it.classId ? it.classId===c.id : true));
       return `<div class="grid-block" data-open-class="${c.id}" data-date="${dateIso}" style="top:${top}px;height:${height}px;background:${color}26;border-left:3px solid ${color};">
-        ${(hasExam||hasObs)?`<div class="grid-block-obs">${hasExam?'📕':''}${hasObs?'📝':''}</div>`:''}
+        ${(hasExam||hasDeb||hasObs)?`<div class="grid-block-obs">${hasExam?'📕':`${hasDeb?'📚':''}${hasObs?'📝':''}`}</div>`:''}
         <div class="grid-block-name">${escapeHtml(subj?subj.name:'')}</div>
         ${height>34 && c.room ? `<div class="grid-block-room">${escapeHtml(c.room)}</div>` : ''}
       </div>`;
@@ -1535,11 +1537,14 @@ function openClassOccurrenceModal(classId, dateIso){
   if(!cls){ return; }
   dateIso = dateIso || todayISO();
   const subj = getSubject(cls.subjectId);
+  const baseFilter = i=>i.subjectId===cls.subjectId && i.date===dateIso && (i.classId ? i.classId===classId : true);
   const obsList = state.items
-    .filter(i=>i.type==='task' && i.subjectId===cls.subjectId && i.date===dateIso && (i.classId ? i.classId===classId : true))
+    .filter(i=>i.type==='task' && (i.kind==='observacion' || !i.kind) && baseFilter(i))
     .sort((a,b)=>(a.createdOrder||0)-(b.createdOrder||0));
-  const examList = state.items
-    .filter(i=>i.type==='exam' && i.subjectId===cls.subjectId && i.date===dateIso && (i.classId ? i.classId===classId : true));
+  const deberesList = state.items
+    .filter(i=>i.type==='task' && i.kind==='deberes' && baseFilter(i))
+    .sort((a,b)=>(a.createdOrder||0)-(b.createdOrder||0));
+  const examList = state.items.filter(i=>i.type==='exam' && baseFilter(i));
   const dateLabel = dateIso ? capitalize(parseISO(dateIso).toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'long', year:'numeric'})) : '';
 
   openModal(`
@@ -1560,6 +1565,21 @@ function openClassOccurrenceModal(classId, dateIso){
       `).join('')}
     </div>` : ''}
     <button class="btn btn-ghost" id="btnAddExam">📕 Añadir examen de este día</button>
+    ${examList.length ? `<div style="font-size:11.5px;color:var(--ink-faint);margin-top:8px;">Este día tiene examen, así que no se muestran deberes ni observaciones.</div>` : `
+    <div style="height:1px;background:var(--line);margin:16px 0;"></div>
+    <div class="field">
+      <label>Deberes de este día</label>
+      ${deberesList.length ? deberesList.map(d=>`
+        <div class="card" style="padding:11px 13px;margin-bottom:8px;">
+          <div style="font-size:13.5px;white-space:pre-wrap;line-height:1.4;">${escapeHtml(d.notes||d.title)}</div>
+          <div style="display:flex;gap:14px;margin-top:8px;">
+            <button class="settings-action" data-edit-deb="${d.id}" style="font-size:12px;">${ICONS.pencil} Editar</button>
+            <button class="settings-action" data-delete-deb="${d.id}" style="font-size:12px;color:var(--danger);">${ICONS.trash} Eliminar</button>
+          </div>
+        </div>
+      `).join('') : `<div style="font-size:13px;color:var(--ink-faint);margin-bottom:10px;">Todavía no hay deberes puestos para este día.</div>`}
+    </div>
+    <button class="btn btn-ghost" id="btnAddDeb">📚 Añadir deberes de este día</button>
     <div style="height:1px;background:var(--line);margin:16px 0;"></div>
     <div class="field">
       <label>Observaciones de este día</label>
@@ -1574,6 +1594,7 @@ function openClassOccurrenceModal(classId, dateIso){
       `).join('') : `<div style="font-size:13px;color:var(--ink-faint);margin-bottom:10px;">Todavía no hay ninguna observación para este día.</div>`}
     </div>
     <button class="btn btn-ghost" id="btnAddObs">${ICONS.pencil} Añadir observación de este día</button>
+    `}
     <div style="height:1px;background:var(--line);margin:16px 0;"></div>
     <button class="btn btn-ghost" id="btnEditClassDef">${ICONS.calSmall} Editar horario de esta clase</button>
     <button class="btn btn-ghost" id="btnViewSubjectTasks" style="margin-top:8px;">${ICONS.clipboard} Ver tareas de ${escapeHtml(subj?subj.name:'esta asignatura')}</button>
@@ -1586,7 +1607,20 @@ function openClassOccurrenceModal(classId, dateIso){
   document.querySelectorAll('[data-edit-exam]').forEach(b=>{
     b.onclick=()=>openItemModal(b.dataset.editExam, { afterSave: ()=>openClassOccurrenceModal(classId, dateIso) });
   });
-  document.getElementById('btnAddObs').onclick=()=>openObservationModal(null, cls.subjectId, dateIso, classId);
+  const btnAddDeb = document.getElementById('btnAddDeb');
+  if(btnAddDeb) btnAddDeb.onclick=()=>openDeberesModal(null, cls.subjectId, dateIso, classId);
+  document.querySelectorAll('[data-edit-deb]').forEach(b=>{
+    b.onclick=()=>openDeberesModal(b.dataset.editDeb, cls.subjectId, dateIso, classId);
+  });
+  document.querySelectorAll('[data-delete-deb]').forEach(b=>{
+    b.onclick=()=>{
+      state.items = state.items.filter(i=>i.id!==b.dataset.deleteDeb);
+      saveState(); toast('Deberes eliminados'); render();
+      openClassOccurrenceModal(classId, dateIso);
+    };
+  });
+  const btnAddObs = document.getElementById('btnAddObs');
+  if(btnAddObs) btnAddObs.onclick=()=>openObservationModal(null, cls.subjectId, dateIso, classId);
   document.querySelectorAll('[data-edit-obs]').forEach(b=>{
     b.onclick=()=>openObservationModal(b.dataset.editObs, cls.subjectId, dateIso, classId);
   });
@@ -1610,7 +1644,7 @@ function openObservationModal(id, subjectId, dateIso, classId){
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
     <div class="field">
       <label>¿Qué se hizo o se explicó en esta clase?</label>
-      <textarea id="fObsText" placeholder="Ej. Se explicó el tema 4, deberes pág. 32, ejercicios 1-5..." style="min-height:150px;">${existing?escapeHtml(existing.notes||existing.title||''):''}</textarea>
+      <textarea id="fObsText" placeholder="Ej. Se explicó el tema 4, se corrigieron ejercicios..." style="min-height:150px;">${existing?escapeHtml(existing.notes||existing.title||''):''}</textarea>
     </div>
     <button class="btn btn-primary" id="fObsSave">${ICONS.pencil} Guardar</button>
     ${existing?`<button class="btn btn-danger" id="fObsDelete">${ICONS.trash} Eliminar</button>`:''}
@@ -1623,7 +1657,7 @@ function openObservationModal(id, subjectId, dateIso, classId){
     if(existing){
       Object.assign(existing, {title, notes:text});
     } else {
-      state.items.push({ id:uid(), type:'task', title, date:dateIso, time:'', notes:text, remindDays:0, subjectId, classId, notified:true });
+      state.items.push({ id:uid(), type:'task', kind:'observacion', title, date:dateIso, time:'', notes:text, remindDays:0, subjectId, classId, notified:true });
     }
     saveState(); toast('Observación guardada'); render();
     openClassOccurrenceModal(classId, dateIso);
@@ -1632,6 +1666,42 @@ function openObservationModal(id, subjectId, dateIso, classId){
     document.getElementById('fObsDelete').onclick=()=>{
       state.items = state.items.filter(i=>i.id!==existing.id);
       saveState(); toast('Eliminada'); render();
+      openClassOccurrenceModal(classId, dateIso);
+    };
+  }
+}
+
+/* Deberes: qué ejercicios/tarea se ha mandado para esta clase, distinto de las observaciones
+   (que registran qué se ha hecho en clase). */
+function openDeberesModal(id, subjectId, dateIso, classId){
+  const existing = id ? state.items.find(i=>i.id===id) : null;
+  openModal(`
+    <div class="modal-head"><div class="modal-title">${existing?'Editar deberes':'Nuevos deberes'}</div>
+      <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+    <div class="field">
+      <label>¿Qué deberes hay que hacer?</label>
+      <textarea id="fDebText" placeholder="Ej. Ejercicios 3, 4 y 5 de la página 32..." style="min-height:150px;">${existing?escapeHtml(existing.notes||existing.title||''):''}</textarea>
+    </div>
+    <button class="btn btn-primary" id="fDebSave">${ICONS.pencil} Guardar</button>
+    ${existing?`<button class="btn btn-danger" id="fDebDelete">${ICONS.trash} Eliminar</button>`:''}
+  `);
+
+  document.getElementById('fDebSave').onclick=()=>{
+    const text = document.getElementById('fDebText').value.trim();
+    if(!text){ toast('Escribe algo antes de guardar'); return; }
+    const title = text.split('\n')[0].slice(0,70);
+    if(existing){
+      Object.assign(existing, {title, notes:text});
+    } else {
+      state.items.push({ id:uid(), type:'task', kind:'deberes', title, date:dateIso, time:'', notes:text, remindDays:0, subjectId, classId, notified:true });
+    }
+    saveState(); toast('Deberes guardados'); render();
+    openClassOccurrenceModal(classId, dateIso);
+  };
+  if(existing){
+    document.getElementById('fDebDelete').onclick=()=>{
+      state.items = state.items.filter(i=>i.id!==existing.id);
+      saveState(); toast('Eliminados'); render();
       openClassOccurrenceModal(classId, dateIso);
     };
   }
