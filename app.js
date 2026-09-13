@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-21';
+const APP_VERSION = '2026-08-22-22';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -482,7 +482,7 @@ function openSubjectDetailModal(subjectId){
       <label>Alumnos (${students.length})</label>
       ${students.length ? `<div class="student-list">${students.map(s=>`
         <div class="student-list-row" data-open-student="${s.id}">
-          <div class="student-avatar" data-photo-for="${s.id}">${escapeHtml((s.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
+          <div class="student-avatar" data-photo-for="${s.id}" data-edit-photo="${s.id}" title="Toca para añadir/cambiar foto">${escapeHtml((s.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
           <span class="student-list-name">${escapeHtml(s.name)}</span>
           <button data-del-student="${s.id}" aria-label="Eliminar" class="student-list-del">${ICONS.x}</button>
         </div>
@@ -515,6 +515,12 @@ function openSubjectDetailModal(subjectId){
   });
   document.querySelectorAll('[data-open-student]').forEach(el=>{
     el.onclick=()=>{ closeModal(); openDailyRecordScreen(subjectId, todayISO(), el.dataset.openStudent); };
+  });
+  document.querySelectorAll('[data-edit-photo]').forEach(el=>{
+    el.onclick=(e)=>{
+      e.stopPropagation();
+      pickAndSaveStudentPhoto(el.dataset.editPhoto, ()=>openSubjectDetailModal(subjectId));
+    };
   });
   document.getElementById('btnAddStudent').onclick=()=>openAddStudentModal(subjectId);
   document.getElementById('btnImportCsv').onclick=()=>document.getElementById('csvStudentsInput').click();
@@ -633,7 +639,9 @@ function openPhotoDB(){
   });
   return _photoDbPromise;
 }
+let _photoCache = {};
 async function savePhoto(studentId, dataUrl){
+  _photoCache[studentId] = dataUrl;
   const db = await openPhotoDB();
   return new Promise((resolve, reject)=>{
     const tx = db.transaction(PHOTO_STORE, 'readwrite');
@@ -643,17 +651,25 @@ async function savePhoto(studentId, dataUrl){
   });
 }
 async function getPhoto(studentId){
+  if(Object.prototype.hasOwnProperty.call(_photoCache, studentId)) return _photoCache[studentId];
   try{
     const db = await openPhotoDB();
-    return new Promise((resolve)=>{
+    const val = await new Promise((resolve)=>{
       const tx = db.transaction(PHOTO_STORE, 'readonly');
       const req = tx.objectStore(PHOTO_STORE).get(studentId);
       req.onsuccess = ()=>resolve(req.result || null);
       req.onerror = ()=>resolve(null);
     });
+    // Si mientras esperábamos esta lectura alguien ya guardó una foto más reciente
+    // en la caché (p.ej. una carga manual), no la pisamos con este valor antiguo.
+    if(!Object.prototype.hasOwnProperty.call(_photoCache, studentId)){
+      _photoCache[studentId] = val;
+    }
+    return val;
   }catch(e){ return null; }
 }
 async function deletePhoto(studentId){
+  delete _photoCache[studentId];
   try{
     const db = await openPhotoDB();
     return new Promise((resolve)=>{
@@ -699,6 +715,32 @@ function compressImageBlob(blob, maxDim, quality){
     img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('No se pudo procesar la imagen')); };
     img.src = url;
   });
+}
+
+/* Carga manual de una foto para un alumno concreto (por si falta en el ZIP importado). */
+function pickAndSaveStudentPhoto(studentId, onDone){
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/*';
+  inp.style.display = 'none';
+  document.body.appendChild(inp);
+  inp.onchange = async ()=>{
+    const file = inp.files[0];
+    if(inp.parentNode) inp.parentNode.removeChild(inp);
+    if(!file) return;
+    try{
+      let dataUrl;
+      try{ dataUrl = await compressImageBlob(file, 220, 0.72); }
+      catch(e){ dataUrl = await blobToDataUrl(file); }
+      await savePhoto(studentId, dataUrl);
+      schedulePhotosDriveUpload();
+      toast('Foto guardada');
+      if(onDone) onDone();
+    }catch(e){
+      toast('No se pudo guardar la foto: '+e.message);
+    }
+  };
+  inp.click();
 }
 function normalizeName(s){ return (s||'').trim().replace(/\s+/g,' ').toLowerCase(); }
 
@@ -759,13 +801,24 @@ async function drivePhotosDownloadIfNewer(){
 }
 
 /* Rellena todos los <div data-photo-for="studentId"> visibles con la foto guardada (async). */
-async function fillPhotoPlaceholders(root){
+function fillPhotoPlaceholders(root){
   const nodes = (root||document).querySelectorAll('[data-photo-for]');
-  for(const el of nodes){
+  const pending = [];
+  nodes.forEach(el=>{
+    const sid = el.dataset.photoFor;
+    if(Object.prototype.hasOwnProperty.call(_photoCache, sid)){
+      const url = _photoCache[sid];
+      if(url){ el.innerHTML = `<img src="${url}" alt="">`; el.classList.add('has-photo'); }
+      return;
+    }
+    pending.push(el);
+  });
+  if(pending.length===0) return Promise.resolve();
+  return Promise.all(pending.map(async el=>{
     const sid = el.dataset.photoFor;
     const url = await getPhoto(sid);
     if(url){ el.innerHTML = `<img src="${url}" alt="">`; el.classList.add('has-photo'); }
-  }
+  }));
 }
 
 async function importStudentPhotosZip(e, subjectId){
@@ -1008,7 +1061,7 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
     <div class="dr-student-header">
       <button class="dr-nav-btn dr-student-arrow" id="drPrevStudent" ${idx===0?'disabled style="opacity:.3;"':''}>${ICONS.chevL}</button>
       <div class="dr-student-name-wrap">
-        <div class="dr-student-avatar-lg" data-photo-for="${student.id}">${escapeHtml((student.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
+        <div class="dr-student-avatar-lg" data-photo-for="${student.id}" data-edit-photo="${student.id}" title="Toca para añadir/cambiar foto">${escapeHtml((student.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
         <div class="dr-student-name">${escapeHtml(student.name)}</div>
         <div class="dr-student-pos">${idx+1} / ${roster.length} · ${escapeHtml(subj.name)} · ${dateLabel}</div>
       </div>
@@ -1041,6 +1094,12 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
   document.getElementById('drBackToClass').onclick=()=>{ closeModal(); openSubjectDetailModal(subjectId); };
 
   fillPhotoPlaceholders(document.querySelector('.modal-sheet'));
+  document.querySelectorAll('[data-edit-photo]').forEach(el=>{
+    el.onclick=(e)=>{
+      e.stopPropagation();
+      pickAndSaveStudentPhoto(el.dataset.editPhoto, ()=>openDailyRecordScreen(subjectId, dateIso, student.id));
+    };
+  });
 
   const goTo = (newSubjectId, newDateIso, newStudentId)=>{ closeModal(); openDailyRecordScreen(newSubjectId, newDateIso, newStudentId); };
 
