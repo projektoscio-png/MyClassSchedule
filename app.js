@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-23';
+const APP_VERSION = '2026-08-22-24';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -762,6 +762,7 @@ function pickAndSaveStudentPhoto(studentId, onDone){
       await savePhoto(studentId, dataUrl);
       schedulePhotosDriveUpload();
       toast('Foto guardada');
+      render();
       if(onDone) onDone();
     }catch(e){
       toast('No se pudo guardar la foto: '+e.message);
@@ -823,6 +824,7 @@ async function drivePhotosDownloadIfNewer(){
       for(const [studentId, dataUrl] of entries){ await savePhoto(studentId, dataUrl); }
       localStorage.setItem('drivePhotosDownloadedModified', String(remoteModified));
       fillPhotoPlaceholders(document);
+      if(ui.tab==='subjects') fillSubjectPhotoCounts(document);
     }
   }catch(e){ /* silencioso */ }
 }
@@ -892,7 +894,7 @@ async function importStudentPhotosZip(e, subjectId){
         <div style="max-height:140px;overflow-y:auto;background:var(--bg);border-radius:12px;padding:10px 14px;font-size:12.5px;color:var(--ink-soft);">${missingStudents.map(n=>escapeHtml(n)).join('<br>')}</div></div>` : ''}
       <button class="btn btn-primary" id="fPhotosDone" style="margin-top:6px;">Aceptar</button>
     `);
-    document.getElementById('fPhotosDone').onclick=()=>{ closeModal(); openSubjectDetailModal(subjectId); };
+    document.getElementById('fPhotosDone').onclick=()=>{ closeModal(); render(); openSubjectDetailModal(subjectId); };
     if(matchedNames.length) schedulePhotosDriveUpload();
   }catch(err){
     toast('No se pudo leer el archivo ZIP: '+err.message);
