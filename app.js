@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-24';
+const APP_VERSION = '2026-08-22-25';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -279,12 +279,13 @@ function renderScheduleDay(){
       periodLabel = `📅 ${df(c.dateStart)} – ${df(c.dateEnd)}`;
     }
     const hasObs = state.items.some(i=>i.type==='task' && i.subjectId===c.subjectId && i.date===dateIso && (i.classId ? i.classId===c.id : true));
+    const hasExam = state.items.some(i=>i.type==='exam' && i.subjectId===c.subjectId && i.date===dateIso && (i.classId ? i.classId===c.id : true));
     return `<div class="card class-card" data-open-class="${c.id}" data-date="${dateIso}">
       <div class="class-bar" style="background:${color}"></div>
       <div class="class-body">
         <div class="class-time">${c.start}<small>${c.end}</small></div>
         <div class="class-info">
-          <div class="class-name">${escapeHtml(subj?subj.name:'(sin nombre)')} ${hasObs?'📝':''}</div>
+          <div class="class-name">${escapeHtml(subj?subj.name:'(sin nombre)')} ${hasExam?'📕':''}${hasObs?'📝':''}</div>
           <div class="class-meta">${metaParts.join(' · ')||'&nbsp;'}</div>
           ${periodLabel?`<div class="class-meta" style="color:var(--primary)">${periodLabel}</div>`:''}
         </div>
@@ -350,8 +351,9 @@ function renderScheduleWeekGrid(){
       const top = ((s-minStart)/totalMin)*gridHeight;
       const height = Math.max(((e-s)/totalMin)*gridHeight, 22);
       const hasObs = state.items.some(it=>it.type==='task' && it.subjectId===c.subjectId && it.date===dateIso && (it.classId ? it.classId===c.id : true));
+      const hasExam = state.items.some(it=>it.type==='exam' && it.subjectId===c.subjectId && it.date===dateIso && (it.classId ? it.classId===c.id : true));
       return `<div class="grid-block" data-open-class="${c.id}" data-date="${dateIso}" style="top:${top}px;height:${height}px;background:${color}26;border-left:3px solid ${color};">
-        ${hasObs?'<div class="grid-block-obs">📝</div>':''}
+        ${(hasExam||hasObs)?`<div class="grid-block-obs">${hasExam?'📕':''}${hasObs?'📝':''}</div>`:''}
         <div class="grid-block-name">${escapeHtml(subj?subj.name:'')}</div>
         ${height>34 && c.room ? `<div class="grid-block-room">${escapeHtml(c.room)}</div>` : ''}
       </div>`;
@@ -1536,6 +1538,8 @@ function openClassOccurrenceModal(classId, dateIso){
   const obsList = state.items
     .filter(i=>i.type==='task' && i.subjectId===cls.subjectId && i.date===dateIso && (i.classId ? i.classId===classId : true))
     .sort((a,b)=>(a.createdOrder||0)-(b.createdOrder||0));
+  const examList = state.items
+    .filter(i=>i.type==='exam' && i.subjectId===cls.subjectId && i.date===dateIso && (i.classId ? i.classId===classId : true));
   const dateLabel = dateIso ? capitalize(parseISO(dateIso).toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'long', year:'numeric'})) : '';
 
   openModal(`
@@ -1546,6 +1550,17 @@ function openClassOccurrenceModal(classId, dateIso){
       </div>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button>
     </div>
+    ${examList.length ? `<div class="field">
+      <label>Exámenes de este día</label>
+      ${examList.map(ex=>`
+        <div class="card" style="padding:11px 13px;margin-bottom:8px;cursor:pointer;" data-edit-exam="${ex.id}">
+          <div style="font-weight:700;font-size:13.5px;">📕 ${escapeHtml(ex.title)}</div>
+          ${ex.notes?`<div style="font-size:12.5px;color:var(--ink-soft);margin-top:2px;">${escapeHtml(ex.notes)}</div>`:''}
+        </div>
+      `).join('')}
+    </div>` : ''}
+    <button class="btn btn-ghost" id="btnAddExam">📕 Añadir examen de este día</button>
+    <div style="height:1px;background:var(--line);margin:16px 0;"></div>
     <div class="field">
       <label>Observaciones de este día</label>
       ${obsList.length ? obsList.map(o=>`
@@ -1564,6 +1579,13 @@ function openClassOccurrenceModal(classId, dateIso){
     <button class="btn btn-ghost" id="btnViewSubjectTasks" style="margin-top:8px;">${ICONS.clipboard} Ver tareas de ${escapeHtml(subj?subj.name:'esta asignatura')}</button>
   `);
 
+  document.getElementById('btnAddExam').onclick=()=>openItemModal(null, {
+    type:'exam', subjectId: cls.subjectId, date: dateIso, classId,
+    afterSave: ()=>openClassOccurrenceModal(classId, dateIso)
+  });
+  document.querySelectorAll('[data-edit-exam]').forEach(b=>{
+    b.onclick=()=>openItemModal(b.dataset.editExam, { afterSave: ()=>openClassOccurrenceModal(classId, dateIso) });
+  });
   document.getElementById('btnAddObs').onclick=()=>openObservationModal(null, cls.subjectId, dateIso, classId);
   document.querySelectorAll('[data-edit-obs]').forEach(b=>{
     b.onclick=()=>openObservationModal(b.dataset.editObs, cls.subjectId, dateIso, classId);
@@ -1797,7 +1819,7 @@ function openItemModal(id, defaults){
       <datalist id="subjectList2">${state.subjects.map(s=>`<option value="${escapeHtml(s.name)}">`).join('')}</datalist>
     </div>
     <div class="row2">
-      <div class="field"><label>Fecha</label><input type="date" id="fDate" value="${existing?existing.date:todayISO()}"></div>
+      <div class="field"><label>Fecha</label><input type="date" id="fDate" value="${existing?existing.date:(defaults.date||todayISO())}"></div>
       <div class="field"><label>Hora (opcional)</label><input type="time" id="fTime" value="${existing?(existing.time||''):''}"></div>
     </div>
     <div class="field">
@@ -1827,17 +1849,22 @@ function openItemModal(id, defaults){
     const remindDays = Number(document.getElementById('fRemind').value);
     const subjName = document.getElementById('fSubject2').value.trim();
     const subject = subjName ? getOrCreateSubject(subjName) : null;
+    const classId = existing ? existing.classId : defaults.classId;
     if(existing){
       Object.assign(existing, {type, title, date, time, notes, remindDays, subjectId: subject?subject.id:null});
     } else {
-      state.items.push({ id:uid(), type, title, date, time, notes, remindDays, subjectId: subject?subject.id:null, notified:false });
+      state.items.push({ id:uid(), type, title, date, time, notes, remindDays, subjectId: subject?subject.id:null, classId, notified:false });
     }
-    saveState(); closeModal(); render(); toast('Guardado');
+    saveState(); closeModal(); render();
+    if(defaults.afterSave) defaults.afterSave();
+    toast('Guardado');
   };
   if(existing){
     document.getElementById('fDelete').onclick=()=>{
       state.items = state.items.filter(i=>i.id!==existing.id);
-      saveState(); closeModal(); render(); toast('Eliminado');
+      saveState(); closeModal(); render();
+      if(defaults.afterSave) defaults.afterSave();
+      toast('Eliminado');
     };
   }
 }
