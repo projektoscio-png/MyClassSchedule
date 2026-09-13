@@ -6,7 +6,8 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
-const APP_VERSION = '2026-08-22-19';
+const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
+const APP_VERSION = '2026-08-22-21';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -481,6 +482,7 @@ function openSubjectDetailModal(subjectId){
       <label>Alumnos (${students.length})</label>
       ${students.length ? `<div class="student-list">${students.map(s=>`
         <div class="student-list-row" data-open-student="${s.id}">
+          <div class="student-avatar" data-photo-for="${s.id}">${escapeHtml((s.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
           <span class="student-list-name">${escapeHtml(s.name)}</span>
           <button data-del-student="${s.id}" aria-label="Eliminar" class="student-list-del">${ICONS.x}</button>
         </div>
@@ -489,7 +491,9 @@ function openSubjectDetailModal(subjectId){
         <button class="btn btn-ghost" id="btnAddStudent">${ICONS.pencil} Añadir alumno</button>
         <button class="btn btn-ghost" id="btnImportCsv" style="margin-top:0">${ICONS.upload} Importar CSV</button>
       </div>
+      <button class="btn btn-ghost" id="btnImportPhotos" style="margin-top:8px;" ${students.length===0?'disabled style="opacity:.5;cursor:default;margin-top:8px;"':''}>📷 Importar fotos (ZIP)</button>
       <input type="file" id="csvStudentsInput" accept=".csv,text/csv,text/plain" style="display:none">
+      <input type="file" id="photosZipInput" accept=".zip,application/zip" style="display:none">
     </div>
     <button class="btn btn-primary" id="btnDailyRecord" ${students.length===0?'disabled style="opacity:.5;cursor:default;"':''}>${ICONS.clipboard} Registro diario de esta clase</button>
     <button class="btn btn-ghost" id="btnExportRecord" style="margin-top:8px;" ${students.length===0?'disabled style="opacity:.5;cursor:default;margin-top:8px;"':''}>${ICONS.download} Exportar registro a Excel</button>
@@ -497,6 +501,7 @@ function openSubjectDetailModal(subjectId){
     <button class="btn btn-ghost" id="btnViewSubjTasks2">${ICONS.clipboard} Ver tareas de esta clase</button>
     <button class="btn btn-danger" id="btnDeleteSubject" style="margin-top:8px;">${ICONS.trash} Eliminar esta clase</button>
   `);
+  fillPhotoPlaceholders(document.querySelector('.modal-sheet'));
 
   document.querySelectorAll('[data-del-student]').forEach(el=>{
     el.onclick=(e)=>{
@@ -504,6 +509,7 @@ function openSubjectDetailModal(subjectId){
       const sid = el.dataset.delStudent;
       state.students = state.students.filter(s=>s.id!==sid);
       state.records = state.records.filter(r=>r.studentId!==sid);
+      deletePhoto(sid);
       saveState(); render(); openSubjectDetailModal(subjectId); toast('Alumno eliminado');
     };
   });
@@ -513,6 +519,9 @@ function openSubjectDetailModal(subjectId){
   document.getElementById('btnAddStudent').onclick=()=>openAddStudentModal(subjectId);
   document.getElementById('btnImportCsv').onclick=()=>document.getElementById('csvStudentsInput').click();
   document.getElementById('csvStudentsInput').onchange=(e)=>importStudentsCsv(e, subjectId);
+  const btnImportPhotos = document.getElementById('btnImportPhotos');
+  if(students.length) btnImportPhotos.onclick=()=>document.getElementById('photosZipInput').click();
+  document.getElementById('photosZipInput').onchange=(e)=>importStudentPhotosZip(e, subjectId);
   const btnDaily = document.getElementById('btnDailyRecord');
   if(students.length){
     btnDaily.onclick=()=>{ closeModal(); openDailyRecordScreen(subjectId, todayISO(), students[0].id); };
@@ -545,6 +554,7 @@ function openSubjectDetailModal(subjectId){
       state.classes = state.classes.filter(c=>c.subjectId!==subjectId);
       state.items.forEach(i=>{ if(i.subjectId===subjectId) i.subjectId=null; });
       const studentIds = state.students.filter(s=>s.subjectId===subjectId).map(s=>s.id);
+      studentIds.forEach(sid=>deletePhoto(sid));
       state.students = state.students.filter(s=>s.subjectId!==subjectId);
       state.records = state.records.filter(r=>!studentIds.includes(r.studentId));
       state.subjects = state.subjects.filter(s=>s.id!==subjectId);
@@ -601,6 +611,213 @@ function splitCsvLine(line){
   }
   result.push(cur);
   return result.map(p=>p.trim()).filter(Boolean);
+}
+
+/* ==================================================================
+   FOTOS DE ALUMNOS
+   Se guardan en IndexedDB (no en localStorage) porque pueden pesar mucho.
+   Viven solo en este dispositivo/navegador: no se incluyen en la copia
+   de seguridad ni en la sincronización con Drive.
+   ================================================================== */
+const PHOTO_DB_NAME = 'miHorarioPhotos';
+const PHOTO_STORE = 'photos';
+let _photoDbPromise = null;
+function openPhotoDB(){
+  if(_photoDbPromise) return _photoDbPromise;
+  _photoDbPromise = new Promise((resolve, reject)=>{
+    if(!('indexedDB' in window)){ reject(new Error('Este navegador no admite guardar fotos')); return; }
+    const req = indexedDB.open(PHOTO_DB_NAME, 1);
+    req.onupgradeneeded = ()=>{ req.result.createObjectStore(PHOTO_STORE); };
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+  return _photoDbPromise;
+}
+async function savePhoto(studentId, dataUrl){
+  const db = await openPhotoDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(PHOTO_STORE, 'readwrite');
+    tx.objectStore(PHOTO_STORE).put(dataUrl, studentId);
+    tx.oncomplete = ()=>resolve();
+    tx.onerror = ()=>reject(tx.error);
+  });
+}
+async function getPhoto(studentId){
+  try{
+    const db = await openPhotoDB();
+    return new Promise((resolve)=>{
+      const tx = db.transaction(PHOTO_STORE, 'readonly');
+      const req = tx.objectStore(PHOTO_STORE).get(studentId);
+      req.onsuccess = ()=>resolve(req.result || null);
+      req.onerror = ()=>resolve(null);
+    });
+  }catch(e){ return null; }
+}
+async function deletePhoto(studentId){
+  try{
+    const db = await openPhotoDB();
+    return new Promise((resolve)=>{
+      const tx = db.transaction(PHOTO_STORE, 'readwrite');
+      tx.objectStore(PHOTO_STORE).delete(studentId);
+      tx.oncomplete = ()=>resolve();
+      tx.onerror = ()=>resolve();
+    });
+  }catch(e){}
+}
+function blobToDataUrl(blob){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+/* Reduce el tamaño de la foto (máx. 220px de lado, JPEG) antes de guardarla, para que
+   ocupe poco tanto en el dispositivo como al sincronizarla con Drive. */
+function compressImageBlob(blob, maxDim, quality){
+  return new Promise((resolve, reject)=>{
+    if(typeof Image==='undefined' || typeof document==='undefined' || !document.createElement){
+      blobToDataUrl(blob).then(resolve).catch(reject);
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = ()=>{
+      try{
+        let w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+        const scale = Math.min(1, maxDim / Math.max(w, h));
+        w = Math.max(1, Math.round(w*scale));
+        h = Math.max(1, Math.round(h*scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      }catch(e){ URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('No se pudo procesar la imagen')); };
+    img.src = url;
+  });
+}
+function normalizeName(s){ return (s||'').trim().replace(/\s+/g,' ').toLowerCase(); }
+
+/* ---------- Sincronización de fotos con Google Drive ---------- */
+function getAllLocalPhotos(){
+  return openPhotoDB().then(db => new Promise((resolve, reject)=>{
+    const tx = db.transaction(PHOTO_STORE, 'readonly');
+    const store = tx.objectStore(PHOTO_STORE);
+    const result = {};
+    const req = store.openCursor();
+    req.onsuccess = (e)=>{
+      const cursor = e.target.result;
+      if(cursor){ result[cursor.key] = cursor.value; cursor.continue(); }
+      else resolve(result);
+    };
+    req.onerror = ()=>reject(req.error);
+  })).catch(()=>({}));
+}
+
+let _photosUploadTimer = null;
+function schedulePhotosDriveUpload(){
+  if(!driveConfigured() || !driveIsConnected()) return;
+  clearTimeout(_photosUploadTimer);
+  _photosUploadTimer = setTimeout(drivePhotosUpload, 2000);
+}
+
+/* Sube todas las fotos guardadas localmente a un archivo propio en Drive. */
+async function drivePhotosUpload(){
+  if(!driveConfigured() || !driveIsConnected()) return;
+  try{
+    const photos = await getAllLocalPhotos();
+    if(Object.keys(photos).length===0) return;
+    const token = await driveGetToken(true);
+    const remote = await driveFindFile(token, DRIVE_PHOTOS_FILE_NAME);
+    const payload = { lastModified: Date.now(), photos };
+    await driveUpload(token, remote ? remote.id : null, payload, DRIVE_PHOTOS_FILE_NAME);
+    localStorage.setItem('drivePhotosPushedModified', String(payload.lastModified));
+  }catch(e){ /* silencioso: se reintentará en la próxima sincronización */ }
+}
+
+/* Al abrir la app: si hay fotos más recientes en Drive que las que ya se bajaron aquí, las trae. */
+async function drivePhotosDownloadIfNewer(){
+  if(!driveConfigured() || !driveIsConnected()) return;
+  try{
+    const token = await driveGetToken(true);
+    const remote = await driveFindFile(token, DRIVE_PHOTOS_FILE_NAME);
+    if(!remote) return;
+    const data = await driveDownload(token, remote.id);
+    const remoteModified = data.lastModified || 0;
+    const localKnown = Number(localStorage.getItem('drivePhotosDownloadedModified')||0);
+    if(remoteModified > localKnown){
+      const entries = Object.entries(data.photos||{});
+      for(const [studentId, dataUrl] of entries){ await savePhoto(studentId, dataUrl); }
+      localStorage.setItem('drivePhotosDownloadedModified', String(remoteModified));
+      fillPhotoPlaceholders(document);
+    }
+  }catch(e){ /* silencioso */ }
+}
+
+/* Rellena todos los <div data-photo-for="studentId"> visibles con la foto guardada (async). */
+async function fillPhotoPlaceholders(root){
+  const nodes = (root||document).querySelectorAll('[data-photo-for]');
+  for(const el of nodes){
+    const sid = el.dataset.photoFor;
+    const url = await getPhoto(sid);
+    if(url){ el.innerHTML = `<img src="${url}" alt="">`; el.classList.add('has-photo'); }
+  }
+}
+
+async function importStudentPhotosZip(e, subjectId){
+  const file = e.target.files[0];
+  if(!file) return;
+  if(typeof JSZip==='undefined'){ toast('No se pudo cargar el lector de ZIP. Revisa tu conexión.'); e.target.value=''; return; }
+  toast('Leyendo el archivo ZIP...');
+  try{
+    const zip = await JSZip.loadAsync(file);
+    const students = state.students.filter(s=>s.subjectId===subjectId);
+    const byName = {};
+    students.forEach(s=> byName[normalizeName(s.name)] = s);
+
+    const entries = Object.values(zip.files).filter(f=>!f.dir && /\.(jpe?g|png|gif|webp)$/i.test(f.name));
+    const matchedNames = [];
+    const unmatchedFiles = [];
+
+    for(const entry of entries){
+      const base = entry.name.split('/').pop();
+      const m = base.match(/^\s*[\w-]+\s*-\s*(.+)\.\w+$/i);
+      const namePart = m ? m[1].trim() : base.replace(/\.\w+$/,'').trim();
+      const student = byName[normalizeName(namePart)];
+      if(student){
+        const arrayBuffer = await entry.async('arraybuffer');
+        const blob = new Blob([arrayBuffer]);
+        let dataUrl;
+        try{ dataUrl = await compressImageBlob(blob, 220, 0.72); }
+        catch(e){ dataUrl = await blobToDataUrl(blob); }
+        await savePhoto(student.id, dataUrl);
+        matchedNames.push(student.name);
+      } else {
+        unmatchedFiles.push(base);
+      }
+    }
+    const missingStudents = students.filter(s=>!matchedNames.includes(s.name)).map(s=>s.name);
+
+    openModal(`
+      <div class="modal-head"><div class="modal-title">Fotos importadas</div>
+        <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+      <p style="font-size:13.5px;color:var(--ink);margin-bottom:12px;"><b>${matchedNames.length}</b> fotos asignadas correctamente.</p>
+      ${unmatchedFiles.length ? `<div class="field"><label>Archivos del ZIP que no coinciden con ningún alumno de esta clase (${unmatchedFiles.length})</label>
+        <div style="max-height:140px;overflow-y:auto;background:var(--bg);border-radius:12px;padding:10px 14px;font-size:12.5px;color:var(--ink-soft);">${unmatchedFiles.map(n=>escapeHtml(n)).join('<br>')}</div></div>` : ''}
+      ${missingStudents.length ? `<div class="field"><label>Alumnos de esta clase sin foto (${missingStudents.length})</label>
+        <div style="max-height:140px;overflow-y:auto;background:var(--bg);border-radius:12px;padding:10px 14px;font-size:12.5px;color:var(--ink-soft);">${missingStudents.map(n=>escapeHtml(n)).join('<br>')}</div></div>` : ''}
+      <button class="btn btn-primary" id="fPhotosDone" style="margin-top:6px;">Aceptar</button>
+    `);
+    document.getElementById('fPhotosDone').onclick=()=>{ closeModal(); openSubjectDetailModal(subjectId); };
+    if(matchedNames.length) schedulePhotosDriveUpload();
+  }catch(err){
+    toast('No se pudo leer el archivo ZIP: '+err.message);
+  }
+  e.target.value='';
 }
 
 function parseStudentsCsv(text){
@@ -791,6 +1008,7 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
     <div class="dr-student-header">
       <button class="dr-nav-btn dr-student-arrow" id="drPrevStudent" ${idx===0?'disabled style="opacity:.3;"':''}>${ICONS.chevL}</button>
       <div class="dr-student-name-wrap">
+        <div class="dr-student-avatar-lg" data-photo-for="${student.id}">${escapeHtml((student.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
         <div class="dr-student-name">${escapeHtml(student.name)}</div>
         <div class="dr-student-pos">${idx+1} / ${roster.length} · ${escapeHtml(subj.name)} · ${dateLabel}</div>
       </div>
@@ -821,6 +1039,8 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
   `);
 
   document.getElementById('drBackToClass').onclick=()=>{ closeModal(); openSubjectDetailModal(subjectId); };
+
+  fillPhotoPlaceholders(document.querySelector('.modal-sheet'));
 
   const goTo = (newSubjectId, newDateIso, newStudentId)=>{ closeModal(); openDailyRecordScreen(newSubjectId, newDateIso, newStudentId); };
 
@@ -1176,7 +1396,7 @@ function bindContentEvents(){
   const btnDriveConnect = document.getElementById('btnDriveConnect');
   if(btnDriveConnect) btnDriveConnect.onclick = ()=>{ driveIsConnected() ? driveDisconnect() : driveConnect(); };
   const btnDriveSyncNow = document.getElementById('btnDriveSyncNow');
-  if(btnDriveSyncNow) btnDriveSyncNow.onclick = ()=>driveSyncUpload({showToast:true, interactive:true});
+  if(btnDriveSyncNow) btnDriveSyncNow.onclick = ()=>{ driveSyncUpload({showToast:true, interactive:true}); drivePhotosDownloadIfNewer(); drivePhotosUpload(); };
 }
 
 document.getElementById('fabBtn').onclick = ()=>{
@@ -1873,8 +2093,9 @@ async function driveGetToken(silent){
   }
 }
 
-async function driveFindFile(token){
-  const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+async function driveFindFile(token, fileName){
+  fileName = fileName || DRIVE_FILE_NAME;
+  const q = encodeURIComponent(`name='${fileName}' and trashed=false`);
   const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,modifiedTime)`, {
     headers: { Authorization: `Bearer ${token}` }
   });
@@ -1891,7 +2112,8 @@ async function driveDownload(token, fileId){
   return res.json();
 }
 
-async function driveUpload(token, fileId, payload){
+async function driveUpload(token, fileId, payload, fileName){
+  fileName = fileName || DRIVE_FILE_NAME;
   const body = JSON.stringify(payload);
   if(fileId){
     const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
@@ -1902,7 +2124,7 @@ async function driveUpload(token, fileId, payload){
     if(!res.ok) throw new Error('No se pudo actualizar la copia en Drive');
     return res.json();
   } else {
-    const metadata = { name: DRIVE_FILE_NAME, mimeType:'application/json' };
+    const metadata = { name: fileName, mimeType:'application/json' };
     const boundary = 'mihorario' + uid();
     const multipartBody =
       `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
@@ -2010,6 +2232,8 @@ async function driveConnect(){
     localStorage.removeItem('driveNeedsReconnect');
     toast('Conectado con Google Drive');
     await driveSyncUpload({showToast:false, interactive:true});
+    drivePhotosDownloadIfNewer();
+    drivePhotosUpload();
     render();
   }catch(e){
     toast('No se pudo conectar: '+e.message);
@@ -2110,6 +2334,7 @@ updateNotifBellIcon();
 checkReminders();
 setInterval(checkReminders, 60000);
 setTimeout(driveCheckOnLoad, 1200);
+setTimeout(drivePhotosDownloadIfNewer, 1800);
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
