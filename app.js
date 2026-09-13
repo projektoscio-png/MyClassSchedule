@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-22';
+const APP_VERSION = '2026-08-22-23';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -409,12 +409,27 @@ function renderSubjectsList(){
       <span class="subject-dot" style="background:${s.color}"></span>
       <div class="subject-row-main">
         <div class="subject-row-name">${escapeHtml(s.name)}</div>
-        <div class="subject-row-sub">${escapeHtml(subtitle)}${studentCount?` · 🧑‍🎓 ${studentCount}`:''}</div>
+        <div class="subject-row-sub">${escapeHtml(subtitle)}${studentCount?` · 🧑‍🎓 ${studentCount}`:''}<span data-photo-count-for="${s.id}"></span></div>
       </div>
       <span class="subject-row-count">${slots.length}</span>
       ${ICONS.chevR}
     </div>`;
   }).join('');
+}
+
+/* Rellena "· 📷 N" junto a cada clase con el nº de alumnos que tienen foto real (no genérica). */
+async function fillSubjectPhotoCounts(root){
+  const nodes = (root||document).querySelectorAll('[data-photo-count-for]');
+  if(nodes.length===0) return;
+  const counts = {};
+  await Promise.all(state.students.map(async s=>{
+    const has = !!(await getPhoto(s.id));
+    if(has) counts[s.subjectId] = (counts[s.subjectId]||0) + 1;
+  }));
+  nodes.forEach(el=>{
+    const sid = el.dataset.photoCountFor;
+    if(counts[sid]) el.textContent = ` · 📷 ${counts[sid]}`;
+  });
 }
 
 function openNewSubjectModal(){
@@ -718,6 +733,18 @@ function compressImageBlob(blob, maxDim, quality){
 }
 
 /* Carga manual de una foto para un alumno concreto (por si falta en el ZIP importado). */
+/* Muestra una foto de alumno en grande, a pantalla casi completa. Se cierra tocando en cualquier sitio. */
+function showPhotoLightbox(url){
+  const old = document.getElementById('photoLightbox');
+  if(old) old.remove();
+  const box = document.createElement('div');
+  box.id = 'photoLightbox';
+  box.className = 'photo-lightbox';
+  box.innerHTML = `<img src="${url}" alt="">`;
+  box.onclick = ()=> box.remove();
+  document.body.appendChild(box);
+}
+
 function pickAndSaveStudentPhoto(studentId, onDone){
   const inp = document.createElement('input');
   inp.type = 'file';
@@ -1061,7 +1088,7 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
     <div class="dr-student-header">
       <button class="dr-nav-btn dr-student-arrow" id="drPrevStudent" ${idx===0?'disabled style="opacity:.3;"':''}>${ICONS.chevL}</button>
       <div class="dr-student-name-wrap">
-        <div class="dr-student-avatar-lg" data-photo-for="${student.id}" data-edit-photo="${student.id}" title="Toca para añadir/cambiar foto">${escapeHtml((student.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
+        <div class="dr-student-avatar-lg" data-photo-for="${student.id}" data-view-photo="${student.id}" title="Toca para ver la foto en grande">${escapeHtml((student.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
         <div class="dr-student-name">${escapeHtml(student.name)}</div>
         <div class="dr-student-pos">${idx+1} / ${roster.length} · ${escapeHtml(subj.name)} · ${dateLabel}</div>
       </div>
@@ -1094,10 +1121,11 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
   document.getElementById('drBackToClass').onclick=()=>{ closeModal(); openSubjectDetailModal(subjectId); };
 
   fillPhotoPlaceholders(document.querySelector('.modal-sheet'));
-  document.querySelectorAll('[data-edit-photo]').forEach(el=>{
-    el.onclick=(e)=>{
+  document.querySelectorAll('[data-view-photo]').forEach(el=>{
+    el.onclick=async (e)=>{
       e.stopPropagation();
-      pickAndSaveStudentPhoto(el.dataset.editPhoto, ()=>openDailyRecordScreen(subjectId, dateIso, student.id));
+      const url = await getPhoto(el.dataset.viewPhoto);
+      if(url) showPhotoLightbox(url);
     };
   });
 
@@ -1383,7 +1411,7 @@ function render(){
   renderDriveHint();
   const content = document.getElementById('content');
   if(ui.tab==='calendar') content.innerHTML = renderSchedule();
-  else if(ui.tab==='subjects') content.innerHTML = renderSubjectsList();
+  else if(ui.tab==='subjects'){ content.innerHTML = renderSubjectsList(); fillSubjectPhotoCounts(content); }
   else if(ui.tab==='tasks') content.innerHTML = renderItemsList('task');
   else if(ui.tab==='exams') content.innerHTML = renderItemsList('exam');
   else if(ui.tab==='holidays') content.innerHTML = renderHolidays();
