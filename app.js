@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-42';
+const APP_VERSION = '2026-08-22-43';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -362,10 +362,18 @@ function renderScheduleWeekGrid(){
       const hasObs = state.items.some(it=>it.type==='task' && (it.kind==='observacion'||!it.kind) && it.subjectId===c.subjectId && it.date===dateIso && (it.classId ? it.classId===c.id : true));
       const hasDeb = state.items.some(it=>it.type==='task' && it.kind==='deberes' && it.subjectId===c.subjectId && it.date===dateIso && (it.classId ? it.classId===c.id : true));
       const hasExam = state.items.some(it=>it.type==='exam' && it.subjectId===c.subjectId && it.date===dateIso && (it.classId ? it.classId===c.id : true));
+      const isShort = height <= 34;
       return `<div class="grid-block" data-open-class="${c.id}" data-date="${dateIso}" style="top:${top}px;height:${height}px;background:${color}26;border-left:3px solid ${color};">
         ${(hasExam||hasDeb||hasObs)?`<div class="grid-block-obs">${hasExam?'📕':`${hasDeb?'📚':''}${hasObs?'📝':''}`}</div>`:''}
-        <div class="grid-block-name">${escapeHtml(subj?subj.name:'')}</div>
-        ${height>34 && c.room ? `<div class="grid-block-room">${escapeHtml(c.room)}</div>` : ''}
+        ${isShort ? `
+          <div class="grid-block-inline-row">
+            <span class="grid-block-name">${escapeHtml(subj?subj.name:'')}</span>
+            ${c.room ? `<span class="grid-block-room-inline">${escapeHtml(c.room)}</span>` : ''}
+          </div>
+        ` : `
+          <div class="grid-block-name">${escapeHtml(subj?subj.name:'')}</div>
+          ${c.room ? `<div class="grid-block-room">${escapeHtml(c.room)}</div>` : ''}
+        `}
       </div>`;
     }).join('');
     return `<div class="grid-daycol ${isToday?'today':''}" style="height:${gridHeight}px">${linesHtml}${blocks}</div>`;

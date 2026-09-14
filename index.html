@@ -242,6 +242,9 @@ body{
 }
 .grid-block-name{font-size:9.5px; font-weight:700; color:var(--ink); line-height:1.15; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .grid-block-room{font-size:8.5px; color:var(--ink-soft); margin-top:1px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.grid-block-inline-row{display:flex; align-items:baseline; gap:5px; overflow:hidden;}
+.grid-block-inline-row .grid-block-name{flex-shrink:1; min-width:0;}
+.grid-block-room-inline{font-size:8.5px; color:var(--ink-soft); white-space:nowrap; flex-shrink:0; opacity:.85;}
 .grid-block-obs{position:absolute; top:2px; right:3px; font-size:10px; line-height:1;}
 
 /* ---------- Content ---------- */
@@ -569,6 +572,7 @@ body{
   .grid-daycol{ min-width:120px; }
   .grid-block-name{ font-size:11.5px; }
   .grid-block-room{ font-size:10px; }
+  .grid-block-room-inline{ font-size:10px; }
   .grid-timecol{ width:46px; }
   .grid-corner{ width:46px; }
   .grid-hourlabel{ font-size:11px; }
