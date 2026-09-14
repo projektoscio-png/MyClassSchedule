@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-30';
+const APP_VERSION = '2026-08-22-31';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -502,6 +502,7 @@ function openSubjectDetailModal(subjectId){
       <input type="text" id="fCalendarId" placeholder="ID del calendario, ej. abc123@group.calendar.google.com" value="${escapeHtml(subj.calendarId||'')}">
       <div style="font-size:11.5px;color:var(--ink-faint);margin-top:6px;">Si lo rellenas, los deberes que añadas para esta clase se escribirán también en ese calendario de Google, en el hueco horario correspondiente de ese día. Lo encuentras en Google Calendar → ajustes de ese calendario → "Integrar calendario" → "ID de calendario".</div>
       <button class="btn btn-ghost" id="btnSaveCalendarId" style="margin-top:8px;">Guardar</button>
+      ${subj.calendarId ? `<button class="btn btn-ghost" id="btnSyncDeberes" style="margin-top:8px;">🔄 Sincronizar deberes ya existentes con este calendario</button>` : ''}
     </div>
     <div style="height:1px;background:var(--line);margin:16px 0;"></div>
     <div class="field">
@@ -551,7 +552,10 @@ function openSubjectDetailModal(subjectId){
   document.getElementById('btnSaveCalendarId').onclick=()=>{
     subj.calendarId = document.getElementById('fCalendarId').value.trim();
     saveState(); toast(subj.calendarId ? 'Calendario vinculado' : 'Calendario desvinculado');
+    openSubjectDetailModal(subjectId);
   };
+  const btnSyncDeberes = document.getElementById('btnSyncDeberes');
+  if(btnSyncDeberes) btnSyncDeberes.onclick=()=>openSyncDeberesModal(subjectId);
   document.getElementById('btnAddStudent').onclick=()=>openAddStudentModal(subjectId);
   document.getElementById('btnImportCsv').onclick=()=>document.getElementById('csvStudentsInput').click();
   document.getElementById('csvStudentsInput').onchange=(e)=>importStudentsCsv(e, subjectId);
@@ -2531,6 +2535,113 @@ async function pushDeberesToCalendar(subjectId, dateIso, cls, deberesText){
   }catch(e){
     toast('No se pudo actualizar el calendario: '+e.message);
   }
+}
+
+/* ---------- Sincronización completa (bidireccional) de deberes ya existentes ---------- */
+function dowIndexISO(dateIso){ return mondayIndex(parseISO(dateIso)); }
+
+function openSyncDeberesModal(subjectId){
+  const subj = getSubject(subjectId);
+  if(!subj || !subj.calendarId){ toast('Esta clase no tiene calendario vinculado'); return; }
+  const slots = state.classes.filter(c=>c.subjectId===subjectId);
+  if(slots.length===0){ toast('Esta clase no tiene ningún tramo horario todavía'); return; }
+  const starts = slots.map(s=>s.dateStart).filter(Boolean).sort();
+  const ends = slots.map(s=>s.dateEnd).filter(Boolean).sort();
+  const defaultFrom = starts.length ? starts[0] : todayISO();
+  const defaultTo = ends.length ? ends[ends.length-1] : addDaysISO(todayISO(), 120);
+
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Sincronizar deberes</div>
+      <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+    <p style="font-size:13px;color:var(--ink-soft);margin-bottom:14px;">Compara, en ese rango de fechas, lo que ya tienes escrito en la app y en el calendario vinculado: lo que falte en uno de los dos sitios se completa con lo que haya en el otro. Si un día tiene contenido distinto en ambos, no se toca (para no perder nada).</p>
+    <div class="row2">
+      <div class="field"><label>Desde</label><input type="date" id="syncFrom" value="${defaultFrom}"></div>
+      <div class="field"><label>Hasta</label><input type="date" id="syncTo" value="${defaultTo}"></div>
+    </div>
+    <button class="btn btn-primary" id="syncGo">Sincronizar</button>
+  `);
+  document.getElementById('syncGo').onclick=async ()=>{
+    const from = document.getElementById('syncFrom').value;
+    const to = document.getElementById('syncTo').value;
+    if(!from || !to){ toast('Indica las dos fechas'); return; }
+    closeModal();
+    toast('Sincronizando deberes, un momento...');
+    await syncDeberesBidirectional(subjectId, from, to);
+  };
+}
+
+async function syncDeberesBidirectional(subjectId, from, to){
+  const subj = getSubject(subjectId);
+  const slots = state.classes.filter(c=>c.subjectId===subjectId);
+  if(!driveConfigured() || !driveIsConnected()){ toast('Conecta Google Drive/Calendar en Ajustes'); return; }
+
+  let token;
+  try{ token = await driveGetToken(false); }
+  catch(e){ toast('No se pudo conectar con Google: '+e.message); return; }
+
+  let events;
+  try{
+    const timeMin = parseISO(from).toISOString();
+    const dayTo = parseISO(to); dayTo.setDate(dayTo.getDate()+1);
+    const timeMax = dayTo.toISOString();
+    const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(subj.calendarId)}/events`
+      + `?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime&maxResults=2500`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if(!res.ok) throw new Error('No se pudo leer el calendario');
+    const data = await res.json();
+    events = (data.items||[]).filter(ev=>ev.start && ev.start.dateTime);
+  }catch(e){ toast('No se pudo leer el calendario: '+e.message); return; }
+
+  let pushed=0, pulled=0;
+  const conflicts = [];
+  const patches = [];
+
+  for(let d=from; d<=to; d=addDaysISO(d,1)){
+    const dow = dowIndexISO(d);
+    for(const slot of slots){
+      if(!slot.days.includes(dow)) continue;
+      if(!classActiveOnDate(slot, d)) continue;
+      const wantStart = timeToMin(slot.start), wantEnd = timeToMin(slot.end);
+      const match = events.find(ev=>{
+        const evStart = new Date(ev.start.dateTime);
+        if(toISO(evStart) !== d) return false;
+        const evEnd = ev.end && ev.end.dateTime ? new Date(ev.end.dateTime) : new Date(evStart.getTime()+60000);
+        const evStartMin = evStart.getHours()*60+evStart.getMinutes(), evEndMin = evEnd.getHours()*60+evEnd.getMinutes();
+        return evStartMin < wantEnd && evEndMin > wantStart;
+      });
+      const appItem = state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===subjectId && i.date===d && (i.classId?i.classId===slot.id:true));
+      const appText = appItem ? (appItem.notes||appItem.title||'').trim() : '';
+      const calText = match ? (match.description||'').trim() : '';
+
+      if(appText && !calText && match){
+        patches.push({ eventId: match.id, description: appText });
+        pushed++;
+      } else if(calText && !appText){
+        state.items.push({ id:uid(), type:'task', kind:'deberes', title: calText.split('\n')[0].slice(0,70), date:d, time:'', notes:calText, remindDays:0, subjectId, classId:slot.id, notified:true });
+        pulled++;
+      } else if(appText && calText && appText!==calText){
+        conflicts.push(d);
+      }
+    }
+  }
+
+  for(const p of patches){
+    try{ await calendarUpdateEventDescription(token, subj.calendarId, p.eventId, p.description); }catch(e){}
+  }
+  if(pulled>0) saveState();
+  render();
+
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Sincronización completada</div>
+      <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+    <p style="font-size:13.5px;color:var(--ink);line-height:1.7;">
+      <b>${pushed}</b> deberes de la app escritos en el calendario.<br>
+      <b>${pulled}</b> deberes del calendario traídos a la app.<br>
+      ${conflicts.length ? `<b>${conflicts.length}</b> día(s) con contenido distinto en ambos sitios (no tocados): ${conflicts.map(d=>parseISO(d).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'})).join(', ')}` : 'Sin conflictos.'}
+    </p>
+    <button class="btn btn-primary" id="syncDone">Aceptar</button>
+  `);
+  document.getElementById('syncDone').onclick=()=>{ closeModal(); openSubjectDetailModal(subjectId); };
 }
 
 
