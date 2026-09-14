@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-32';
+const APP_VERSION = '2026-08-22-33';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1734,10 +1734,16 @@ function openDeberesModal(id, subjectId, dateIso, classId){
   if(existing){
     document.getElementById('fDebDelete').onclick=()=>{
       state.items = state.items.filter(i=>i.id!==existing.id);
-      saveState(); toast('Eliminados'); render();
+      saveState(); render();
       if(hasCalendar){
         const cls = state.classes.find(c=>c.id===classId);
-        if(cls) pushDeberesToCalendar(subjectId, dateIso, cls, '');
+        if(cls){
+          pushDeberesToCalendar(subjectId, dateIso, cls, '');
+        } else {
+          toast('Eliminado en la app, pero no se pudo actualizar el calendario (falta el dato del tramo horario, classId="'+classId+'")');
+        }
+      } else {
+        toast('Eliminado en la app (esta clase no tiene calendario vinculado: calendarId="'+((getSubject(subjectId)||{}).calendarId)+'")');
       }
       openClassOccurrenceModal(classId, dateIso);
     };
