@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-39';
+const APP_VERSION = '2026-08-22-40';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1592,6 +1592,7 @@ function openClassOccurrenceModal(classId, dateIso){
     ${showExamField ? `<div class="field">
       <label>📕 Examen</label>
       <input type="text" id="examTitle" placeholder="Ej. Examen tema 4" value="${escapeHtml(existingExam?existingExam.title:'')}">
+      ${existingExam ? `<button type="button" class="settings-action" id="btnDeleteExam" style="font-size:12px;color:var(--danger);margin-top:6px;">${ICONS.trash} Eliminar examen</button>` : ''}
     </div>` : ''}
     ${showDebObsFields ? `
     <div class="field">
@@ -1600,16 +1601,39 @@ function openClassOccurrenceModal(classId, dateIso){
       ${hasCalendar ? `<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-soft);margin-top:8px;cursor:pointer;">
         <input type="checkbox" id="debToCalendar" checked style="width:16px;height:16px;"> Sincronizar con el calendario de Google
       </label>` : ''}
+      ${existingDeb ? `<button type="button" class="settings-action" id="btnDeleteDeb" style="font-size:12px;color:var(--danger);margin-top:6px;">${ICONS.trash} Eliminar deberes</button>` : ''}
     </div>
     <div class="field">
       <label>📝 Observación</label>
       <textarea id="obsText" placeholder="¿Qué se ha hecho o explicado en esta clase?" style="min-height:90px;">${escapeHtml(existingObs?(existingObs.notes||existingObs.title):'')}</textarea>
+      ${existingObs ? `<button type="button" class="settings-action" id="btnDeleteObs" style="font-size:12px;color:var(--danger);margin-top:6px;">${ICONS.trash} Eliminar observación</button>` : ''}
     </div>` : ''}
     <button class="btn btn-primary" id="btnSaveOccurrence">${ICONS.pencil} Guardar</button>
     <div style="height:1px;background:var(--line);margin:16px 0;"></div>
     <button class="btn btn-ghost" id="btnEditClassDef">${ICONS.calSmall} Editar horario de esta clase</button>
     <button class="btn btn-ghost" id="btnViewSubjectTasks" style="margin-top:8px;">${ICONS.clipboard} Ver tareas de ${escapeHtml(subj?subj.name:'esta asignatura')}</button>
   `);
+
+  const btnDeleteExam = document.getElementById('btnDeleteExam');
+  if(btnDeleteExam) btnDeleteExam.onclick=()=>{
+    state.items = state.items.filter(i=>i.id!==existingExam.id);
+    saveState(); render(); toast('Examen eliminado');
+    openClassOccurrenceModal(classId, dateIso);
+  };
+  const btnDeleteDeb = document.getElementById('btnDeleteDeb');
+  if(btnDeleteDeb) btnDeleteDeb.onclick=()=>{
+    state.items = state.items.filter(i=>i.id!==existingDeb.id);
+    saveState(); render();
+    if(hasCalendar) pushDeberesToCalendar(cls.subjectId, dateIso, cls, '');
+    else toast('Deberes eliminados');
+    openClassOccurrenceModal(classId, dateIso);
+  };
+  const btnDeleteObs = document.getElementById('btnDeleteObs');
+  if(btnDeleteObs) btnDeleteObs.onclick=()=>{
+    state.items = state.items.filter(i=>i.id!==existingObs.id);
+    saveState(); render(); toast('Observación eliminada');
+    openClassOccurrenceModal(classId, dateIso);
+  };
 
   document.getElementById('btnSaveOccurrence').onclick=()=>{
     const examTitle = showExamField && document.getElementById('examTitle') ? document.getElementById('examTitle').value.trim() : '';
