@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-37';
+const APP_VERSION = '2026-08-22-39';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1568,14 +1568,18 @@ function openClassOccurrenceModal(classId, dateIso){
   dateIso = dateIso || todayISO();
   const subj = getSubject(cls.subjectId);
   const baseFilter = i=>i.subjectId===cls.subjectId && i.date===dateIso && (i.classId ? i.classId===classId : true);
-  const obsList = state.items
-    .filter(i=>i.type==='task' && (i.kind==='observacion' || !i.kind) && baseFilter(i))
-    .sort((a,b)=>(a.createdOrder||0)-(b.createdOrder||0));
-  const deberesList = state.items
-    .filter(i=>i.type==='task' && i.kind==='deberes' && baseFilter(i))
-    .sort((a,b)=>(a.createdOrder||0)-(b.createdOrder||0));
-  const examList = state.items.filter(i=>i.type==='exam' && baseFilter(i));
+  const existingObs = state.items.find(i=>i.type==='task' && (i.kind==='observacion' || !i.kind) && baseFilter(i)) || null;
+  const existingDeb = state.items.find(i=>i.type==='task' && i.kind==='deberes' && baseFilter(i)) || null;
+  const existingExam = state.items.find(i=>i.type==='exam' && baseFilter(i)) || null;
+  const hasCalendar = !!(subj && subj.calendarId);
   const dateLabel = dateIso ? capitalize(parseISO(dateIso).toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'long', year:'numeric'})) : '';
+
+  // Examen y deberes/observación son excluyentes entre sí. Si ya hay uno de los dos lados,
+  // solo se muestra ese lado; si no hay nada todavía, se puede elegir cualquiera de los dos.
+  const hasExam = !!existingExam;
+  const hasDebOrObs = !!(existingDeb || existingObs);
+  const showExamField = hasExam || !hasDebOrObs;
+  const showDebObsFields = hasDebOrObs || !hasExam;
 
   openModal(`
     <div class="modal-head">
@@ -1585,87 +1589,73 @@ function openClassOccurrenceModal(classId, dateIso){
       </div>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button>
     </div>
-    ${examList.length ? `<div class="field">
-      <label>Exámenes de este día</label>
-      ${examList.map(ex=>`
-        <div class="card" style="padding:11px 13px;margin-bottom:8px;cursor:pointer;" data-edit-exam="${ex.id}">
-          <div style="font-weight:700;font-size:13.5px;">📕 ${escapeHtml(ex.title)}</div>
-          ${ex.notes?`<div style="font-size:12.5px;color:var(--ink-soft);margin-top:2px;">${escapeHtml(ex.notes)}</div>`:''}
-        </div>
-      `).join('')}
+    ${showExamField ? `<div class="field">
+      <label>📕 Examen</label>
+      <input type="text" id="examTitle" placeholder="Ej. Examen tema 4" value="${escapeHtml(existingExam?existingExam.title:'')}">
     </div>` : ''}
-    <button class="btn btn-ghost" id="btnAddExam">📕 Añadir examen de este día</button>
-    ${examList.length ? `<div style="font-size:11.5px;color:var(--ink-faint);margin-top:8px;">Este día tiene examen, así que no se muestran deberes ni observaciones.</div>` : `
-    <div style="height:1px;background:var(--line);margin:16px 0;"></div>
+    ${showDebObsFields ? `
     <div class="field">
-      <label>Deberes de este día</label>
-      ${deberesList.length ? deberesList.map(d=>`
-        <div class="card" style="padding:11px 13px;margin-bottom:8px;">
-          <div style="font-size:13.5px;white-space:pre-wrap;line-height:1.4;">${escapeHtml(d.notes||d.title)}</div>
-          <div style="display:flex;gap:14px;margin-top:8px;">
-            <button class="settings-action" data-edit-deb="${d.id}" style="font-size:12px;">${ICONS.pencil} Editar</button>
-            <button class="settings-action" data-delete-deb="${d.id}" style="font-size:12px;color:var(--danger);">${ICONS.trash} Eliminar</button>
-          </div>
-        </div>
-      `).join('') : `<div style="font-size:13px;color:var(--ink-faint);margin-bottom:10px;">Todavía no hay deberes puestos para este día.</div>`}
+      <label>📚 Deberes</label>
+      <textarea id="debText" placeholder="¿Qué deberes hay que hacer?" style="min-height:90px;">${escapeHtml(existingDeb?(existingDeb.notes||existingDeb.title):'')}</textarea>
+      ${hasCalendar ? `<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-soft);margin-top:8px;cursor:pointer;">
+        <input type="checkbox" id="debToCalendar" checked style="width:16px;height:16px;"> Sincronizar con el calendario de Google
+      </label>` : ''}
     </div>
-    <button class="btn btn-ghost" id="btnAddDeb">📚 Añadir deberes de este día</button>
-    <div style="height:1px;background:var(--line);margin:16px 0;"></div>
     <div class="field">
-      <label>Observaciones de este día</label>
-      ${obsList.length ? obsList.map(o=>`
-        <div class="card" style="padding:11px 13px;margin-bottom:8px;">
-          <div style="font-size:13.5px;white-space:pre-wrap;line-height:1.4;">${escapeHtml(o.notes||o.title)}</div>
-          <div style="display:flex;gap:14px;margin-top:8px;">
-            <button class="settings-action" data-edit-obs="${o.id}" style="font-size:12px;">${ICONS.pencil} Editar</button>
-            <button class="settings-action" data-delete-obs="${o.id}" style="font-size:12px;color:var(--danger);">${ICONS.trash} Eliminar</button>
-          </div>
-        </div>
-      `).join('') : `<div style="font-size:13px;color:var(--ink-faint);margin-bottom:10px;">Todavía no hay ninguna observación para este día.</div>`}
-    </div>
-    <button class="btn btn-ghost" id="btnAddObs">${ICONS.pencil} Añadir observación de este día</button>
-    `}
+      <label>📝 Observación</label>
+      <textarea id="obsText" placeholder="¿Qué se ha hecho o explicado en esta clase?" style="min-height:90px;">${escapeHtml(existingObs?(existingObs.notes||existingObs.title):'')}</textarea>
+    </div>` : ''}
+    <button class="btn btn-primary" id="btnSaveOccurrence">${ICONS.pencil} Guardar</button>
     <div style="height:1px;background:var(--line);margin:16px 0;"></div>
     <button class="btn btn-ghost" id="btnEditClassDef">${ICONS.calSmall} Editar horario de esta clase</button>
     <button class="btn btn-ghost" id="btnViewSubjectTasks" style="margin-top:8px;">${ICONS.clipboard} Ver tareas de ${escapeHtml(subj?subj.name:'esta asignatura')}</button>
   `);
 
-  document.getElementById('btnAddExam').onclick=()=>openItemModal(null, {
-    type:'exam', subjectId: cls.subjectId, date: dateIso, classId,
-    afterSave: ()=>openClassOccurrenceModal(classId, dateIso)
-  });
-  document.querySelectorAll('[data-edit-exam]').forEach(b=>{
-    b.onclick=()=>openItemModal(b.dataset.editExam, { afterSave: ()=>openClassOccurrenceModal(classId, dateIso) });
-  });
-  const btnAddDeb = document.getElementById('btnAddDeb');
-  if(btnAddDeb) btnAddDeb.onclick=()=>openDeberesModal(null, cls.subjectId, dateIso, classId);
-  document.querySelectorAll('[data-edit-deb]').forEach(b=>{
-    b.onclick=()=>openDeberesModal(b.dataset.editDeb, cls.subjectId, dateIso, classId);
-  });
-  document.querySelectorAll('[data-delete-deb]').forEach(b=>{
-    b.onclick=()=>{
-      state.items = state.items.filter(i=>i.id!==b.dataset.deleteDeb);
-      saveState(); render();
-      if(subj && subj.calendarId){
-        pushDeberesToCalendar(cls.subjectId, dateIso, cls, '');
-      } else {
-        toast('Deberes eliminados');
-      }
-      openClassOccurrenceModal(classId, dateIso);
-    };
-  });
-  const btnAddObs = document.getElementById('btnAddObs');
-  if(btnAddObs) btnAddObs.onclick=()=>openObservationModal(null, cls.subjectId, dateIso, classId);
-  document.querySelectorAll('[data-edit-obs]').forEach(b=>{
-    b.onclick=()=>openObservationModal(b.dataset.editObs, cls.subjectId, dateIso, classId);
-  });
-  document.querySelectorAll('[data-delete-obs]').forEach(b=>{
-    b.onclick=()=>{
-      state.items = state.items.filter(i=>i.id!==b.dataset.deleteObs);
-      saveState(); toast('Observación eliminada'); render();
-      openClassOccurrenceModal(classId, dateIso);
-    };
-  });
+  document.getElementById('btnSaveOccurrence').onclick=()=>{
+    const examTitle = showExamField && document.getElementById('examTitle') ? document.getElementById('examTitle').value.trim() : '';
+    const debText = showDebObsFields && document.getElementById('debText') ? document.getElementById('debText').value.trim() : '';
+    const obsText = showDebObsFields && document.getElementById('obsText') ? document.getElementById('obsText').value.trim() : '';
+
+    if(examTitle && (debText || obsText)){
+      toast('No puede haber examen a la vez que deberes u observación ese día. Deja uno de los dos en blanco.');
+      return;
+    }
+
+    // Examen
+    if(examTitle){
+      if(existingExam){ Object.assign(existingExam, {title: examTitle}); }
+      else { state.items.push({ id:uid(), type:'exam', title:examTitle, date:dateIso, time:'', notes:'', remindDays:2, subjectId:cls.subjectId, classId, notified:false }); }
+    } else if(existingExam && showExamField){
+      state.items = state.items.filter(i=>i.id!==existingExam.id);
+    }
+
+    // Deberes
+    if(debText){
+      const title = debText.split('\n')[0].slice(0,70);
+      let itemRef;
+      if(existingDeb){ Object.assign(existingDeb, {title, notes:debText}); itemRef = existingDeb; }
+      else { itemRef = { id:uid(), type:'task', kind:'deberes', title, date:dateIso, time:'', notes:debText, remindDays:0, subjectId:cls.subjectId, classId, notified:true }; state.items.push(itemRef); }
+      saveState();
+      const toCalendar = hasCalendar && document.getElementById('debToCalendar') && document.getElementById('debToCalendar').checked;
+      if(toCalendar) pushDeberesToCalendar(cls.subjectId, dateIso, cls, debText, itemRef);
+    } else if(existingDeb && showDebObsFields){
+      state.items = state.items.filter(i=>i.id!==existingDeb.id);
+      if(hasCalendar) pushDeberesToCalendar(cls.subjectId, dateIso, cls, '');
+    }
+
+    // Observación
+    if(obsText){
+      const title = obsText.split('\n')[0].slice(0,70);
+      if(existingObs){ Object.assign(existingObs, {title, notes:obsText}); }
+      else { state.items.push({ id:uid(), type:'task', kind:'observacion', title, date:dateIso, time:'', notes:obsText, remindDays:0, subjectId:cls.subjectId, classId, notified:true }); }
+    } else if(existingObs && showDebObsFields){
+      state.items = state.items.filter(i=>i.id!==existingObs.id);
+    }
+
+    saveState(); render(); toast('Guardado');
+    openClassOccurrenceModal(classId, dateIso);
+  };
+
   document.getElementById('btnEditClassDef').onclick=()=>{ closeModal(); openClassModal(classId); };
   document.getElementById('btnViewSubjectTasks').onclick=()=>{
     closeModal(); ui.tab='tasks'; ui.subjectFilter=cls.subjectId; render();
