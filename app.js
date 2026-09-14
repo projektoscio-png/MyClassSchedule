@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-36';
+const APP_VERSION = '2026-08-22-37';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -54,6 +54,14 @@ function migrateState(st){
   st.settings = Object.assign({ notified:[], weekMode:'full', lastModified:0, notificationsEnabled:true }, st.settings||{});
   if(!Array.isArray(st.students)) st.students = [];
   if(!Array.isArray(st.records)) st.records = [];
+  // Deberes ya existentes de antes de que se guardara la marca de sincronización con Calendar:
+  // se marcan como "ya sincronizados" para que un borrado hecho directamente en Google Calendar
+  // se detecte correctamente ya en la primera sincronización, en vez de reescribirse una vez más.
+  (st.items||[]).forEach(i=>{
+    if(i.type==='task' && i.kind==='deberes' && typeof i.calendarSyncedText!=='string'){
+      i.calendarSyncedText = i.notes || i.title || '';
+    }
+  });
   return st;
 }
 function loadState(){
@@ -2652,14 +2660,18 @@ async function syncDeberesBidirectional(subjectId, from, to, opts){
       const appItem = state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===subjectId && i.date===d && (i.classId?i.classId===slot.id:true));
       const appText = appItem ? (appItem.notes||appItem.title||'').trim() : '';
       const calText = match ? (match.description||'').trim() : '';
-      const previouslySynced = appItem && appItem.calendarSyncedText ? appItem.calendarSyncedText.trim() : '';
+      const previouslySynced = appItem && typeof appItem.calendarSyncedText === 'string';
 
       if(!calText && appText && match && previouslySynced){
-        // La app ya había escrito esto en el calendario antes, y ahora está vacío ahí:
-        // se ha borrado a propósito en Google Calendar, así que lo borramos también en la app.
+        // La app ya había escrito esto en el calendario antes (o lo sabemos con certeza porque
+        // se creó vía sincronización), y ahora está vacío ahí: se ha borrado a propósito en
+        // Google Calendar, así que lo borramos también en la app en vez de volver a escribirlo.
         state.items = state.items.filter(i=>i.id!==appItem.id);
         pulledDeletes++;
       } else if(appText && !calText && match){
+        // Primera vez que vemos este deberes junto a este evento (todavía no tiene marca de
+        // sincronización): lo escribimos en el calendario y, a partir de ahora, si se vacía
+        // ahí lo detectaremos como un borrado de verdad.
         patches.push({ eventId: match.id, description: appText, appItem });
         pushed++;
       } else if(calText && !appText){
