@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-40';
+const APP_VERSION = '2026-08-22-41';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1230,6 +1230,57 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
 /* ==================================================================
    EXÁMENES Y TAREAS
    ================================================================== */
+/* Pestaña Tareas: observaciones y deberes en dos columnas separadas, con el texto completo. */
+function renderTasksSplitByKind(){
+  let items = state.items.filter(i=>i.type==='task');
+  if(ui.subjectFilter){ items = items.filter(i=>i.subjectId===ui.subjectFilter); }
+  items = items.sort((a,b)=> a.date===b.date ? 0 : a.date.localeCompare(b.date));
+
+  const obsItems = items.filter(i=>i.kind==='observacion' || !i.kind);
+  const debItems = items.filter(i=>i.kind==='deberes');
+
+  const usedSubjectIds = [...new Set(state.items.filter(i=>i.type==='task').map(i=>i.subjectId).filter(Boolean))];
+  const usedSubjects = usedSubjectIds.map(id=>getSubject(id)).filter(Boolean).sort((a,b)=>a.name.localeCompare(b.name));
+  let filterHtml = '';
+  if(usedSubjects.length){
+    filterHtml = `<div class="subject-filter">
+      <button data-sf="" class="${!ui.subjectFilter?'active':''}">Todas</button>
+      ${usedSubjects.map(s=>`<button data-sf="${s.id}" class="${ui.subjectFilter===s.id?'active':''}" style="${ui.subjectFilter===s.id?`background:${s.color};border-color:${s.color};`:''}">${escapeHtml(s.name)}</button>`).join('')}
+    </div>`;
+  }
+
+  function renderColumn(list, emptyLabel, emptyEmoji){
+    if(list.length===0){
+      return `<div class="empty-state" style="padding:36px 14px;"><span class="emoji">${emptyEmoji}</span><div class="et">${emptyLabel}</div></div>`;
+    }
+    return list.map(i=>{
+      const subj = i.subjectId ? getSubject(i.subjectId) : null;
+      const dateLabel = capitalize(parseISO(i.date).toLocaleDateString('es-ES',{weekday:'short', day:'numeric', month:'short'}));
+      return `<div class="card task-full-card" data-open-item="${i.id}">
+        <div class="task-full-header">
+          <span class="task-full-date">${dateLabel}</span>
+          ${subj?`<span class="task-full-subject" style="background:${subj.color}22;color:${subj.color}">${escapeHtml(subj.name)}</span>`:''}
+        </div>
+        <div class="task-full-text">${escapeHtml(i.notes||i.title)}</div>
+      </div>`;
+    }).join('');
+  }
+
+  return `
+    ${filterHtml}
+    <div class="tareas-columns">
+      <div class="tareas-col">
+        <div class="tareas-col-title">📝 Observaciones</div>
+        ${renderColumn(obsItems, 'Sin observaciones', '📝')}
+      </div>
+      <div class="tareas-col">
+        <div class="tareas-col-title">📚 Deberes</div>
+        ${renderColumn(debItems, 'Sin deberes', '📚')}
+      </div>
+    </div>
+  `;
+}
+
 function renderItemsList(filterType){
   const today = todayISO();
   let items = state.items.filter(i=>i.type===filterType);
@@ -1441,7 +1492,7 @@ function render(){
   const content = document.getElementById('content');
   if(ui.tab==='calendar') content.innerHTML = renderSchedule();
   else if(ui.tab==='subjects'){ content.innerHTML = renderSubjectsList(); fillSubjectPhotoCounts(content); }
-  else if(ui.tab==='tasks') content.innerHTML = renderItemsList('task');
+  else if(ui.tab==='tasks') content.innerHTML = renderTasksSplitByKind();
   else if(ui.tab==='exams') content.innerHTML = renderItemsList('exam');
   else if(ui.tab==='holidays') content.innerHTML = renderHolidays();
   else content.innerHTML = renderSettings();
@@ -1471,6 +1522,8 @@ function bindContentEvents(){
       const item = state.items.find(i=>i.id===el.dataset.openItem);
       if(item && item.kind==='deberes'){
         openDeberesModal(item.id, item.subjectId, item.date, item.classId);
+      } else if(item && item.type==='task' && (item.kind==='observacion' || !item.kind)){
+        openObservationModal(item.id, item.subjectId, item.date, item.classId);
       } else {
         openItemModal(el.dataset.openItem);
       }
