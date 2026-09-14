@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-33';
+const APP_VERSION = '2026-08-22-34';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1637,7 +1637,12 @@ function openClassOccurrenceModal(classId, dateIso){
   document.querySelectorAll('[data-delete-deb]').forEach(b=>{
     b.onclick=()=>{
       state.items = state.items.filter(i=>i.id!==b.dataset.deleteDeb);
-      saveState(); toast('Deberes eliminados'); render();
+      saveState(); render();
+      if(subj && subj.calendarId){
+        pushDeberesToCalendar(cls.subjectId, dateIso, cls, '');
+      } else {
+        toast('Deberes eliminados');
+      }
       openClassOccurrenceModal(classId, dateIso);
     };
   });
@@ -1732,20 +1737,28 @@ function openDeberesModal(id, subjectId, dateIso, classId){
     openClassOccurrenceModal(classId, dateIso);
   };
   if(existing){
-    document.getElementById('fDebDelete').onclick=()=>{
+    document.getElementById('fDebDelete').onclick=async ()=>{
       state.items = state.items.filter(i=>i.id!==existing.id);
       saveState(); render();
+      let resultMsg;
       if(hasCalendar){
         const cls = state.classes.find(c=>c.id===classId);
         if(cls){
-          pushDeberesToCalendar(subjectId, dateIso, cls, '');
+          const result = await pushDeberesToCalendar(subjectId, dateIso, cls, '');
+          resultMsg = 'Eliminado en la app.\n\nResultado en el calendario: ' + (result?result.detail:'(sin respuesta)');
         } else {
-          toast('Eliminado en la app, pero no se pudo actualizar el calendario (falta el dato del tramo horario, classId="'+classId+'")');
+          resultMsg = 'Eliminado en la app.\n\nNo se pudo actualizar el calendario: falta el dato del tramo horario (classId="'+classId+'").';
         }
       } else {
-        toast('Eliminado en la app (esta clase no tiene calendario vinculado: calendarId="'+((getSubject(subjectId)||{}).calendarId)+'")');
+        resultMsg = 'Eliminado en la app.\n\nEsta clase no tiene calendario vinculado (calendarId="'+((getSubject(subjectId)||{}).calendarId)+'").';
       }
-      openClassOccurrenceModal(classId, dateIso);
+      openModal(`
+        <div class="modal-head"><div class="modal-title">Resultado</div>
+          <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+        <p style="font-size:13.5px;color:var(--ink);line-height:1.6;white-space:pre-wrap;">${escapeHtml(resultMsg)}</p>
+        <button class="btn btn-primary" id="fDebDeleteResultOk">Aceptar</button>
+      `);
+      document.getElementById('fDebDeleteResultOk').onclick=()=>{ closeModal(); openClassOccurrenceModal(classId, dateIso); };
     };
   }
 }
@@ -2534,19 +2547,27 @@ async function calendarUpdateEventDescription(token, calendarId, eventId, descri
    en el evento correspondiente a ese día y tramo horario. No bloquea el guardado local si falla. */
 async function pushDeberesToCalendar(subjectId, dateIso, cls, deberesText){
   const subj = getSubject(subjectId);
-  if(!subj || !subj.calendarId) return;
-  if(!driveConfigured() || !driveIsConnected()){ toast('Conecta Google Drive/Calendar en Ajustes para sincronizar deberes'); return; }
+  if(!subj || !subj.calendarId) return { ok:false, reason:'no-calendar', detail:'Esta clase no tiene calendario vinculado.' };
+  if(!driveConfigured() || !driveIsConnected()){
+    toast('Conecta Google Drive/Calendar en Ajustes para sincronizar deberes');
+    return { ok:false, reason:'not-connected', detail:'No hay conexión activa con Google Drive/Calendar.' };
+  }
   try{
     const token = await driveGetToken(false);
     const event = await calendarFindEventForSlot(token, subj.calendarId, dateIso, cls.start, cls.end);
     if(!event){
-      toast('No se encontró ningún evento en el calendario para ese día y hora. ¿Ya está creado el hueco de esa clase?');
-      return;
+      const msg = 'No se encontró ningún evento en el calendario para ese día y hora. ¿Ya está creado el hueco de esa clase?';
+      toast(msg);
+      return { ok:false, reason:'no-event', detail:msg };
     }
     await calendarUpdateEventDescription(token, subj.calendarId, event.id, deberesText);
-    toast(deberesText ? 'Deberes escritos también en el calendario de Google' : 'Deberes borrados también del calendario de Google');
+    const msg = deberesText ? 'Deberes escritos también en el calendario de Google' : 'Deberes borrados también del calendario de Google';
+    toast(msg);
+    return { ok:true, detail:msg, eventId:event.id };
   }catch(e){
-    toast('No se pudo actualizar el calendario: '+e.message);
+    const msg = 'No se pudo actualizar el calendario: '+e.message;
+    toast(msg);
+    return { ok:false, reason:'error', detail:msg };
   }
 }
 
