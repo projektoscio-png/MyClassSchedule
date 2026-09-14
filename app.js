@@ -4,10 +4,10 @@
 const STORAGE_KEY = 'miHorario_data_v1';
 /* Rellena esto con tu Client ID de Google Cloud (termina en .apps.googleusercontent.com) */
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-27';
+const APP_VERSION = '2026-08-22-28';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -498,6 +498,13 @@ function openSubjectDetailModal(subjectId){
     <button class="btn btn-ghost" id="btnAddSlot">${ICONS.pencil} Añadir tramo horario</button>
     <div style="height:1px;background:var(--line);margin:16px 0;"></div>
     <div class="field">
+      <label>Calendario de Google vinculado (opcional)</label>
+      <input type="text" id="fCalendarId" placeholder="ID del calendario, ej. abc123@group.calendar.google.com" value="${escapeHtml(subj.calendarId||'')}">
+      <div style="font-size:11.5px;color:var(--ink-faint);margin-top:6px;">Si lo rellenas, los deberes que añadas para esta clase se escribirán también en ese calendario de Google, en el hueco horario correspondiente de ese día. Lo encuentras en Google Calendar → ajustes de ese calendario → "Integrar calendario" → "ID de calendario".</div>
+      <button class="btn btn-ghost" id="btnSaveCalendarId" style="margin-top:8px;">Guardar</button>
+    </div>
+    <div style="height:1px;background:var(--line);margin:16px 0;"></div>
+    <div class="field">
       <label>Alumnos (${students.length})</label>
       ${students.length ? `<div class="student-list">${students.map(s=>`
         <div class="student-list-row" data-open-student="${s.id}">
@@ -541,6 +548,10 @@ function openSubjectDetailModal(subjectId){
       pickAndSaveStudentPhoto(el.dataset.editPhoto, ()=>openSubjectDetailModal(subjectId));
     };
   });
+  document.getElementById('btnSaveCalendarId').onclick=()=>{
+    subj.calendarId = document.getElementById('fCalendarId').value.trim();
+    saveState(); toast(subj.calendarId ? 'Calendario vinculado' : 'Calendario desvinculado');
+  };
   document.getElementById('btnAddStudent').onclick=()=>openAddStudentModal(subjectId);
   document.getElementById('btnImportCsv').onclick=()=>document.getElementById('csvStudentsInput').click();
   document.getElementById('csvStudentsInput').onchange=(e)=>importStudentsCsv(e, subjectId);
@@ -1675,6 +1686,8 @@ function openObservationModal(id, subjectId, dateIso, classId){
    (que registran qué se ha hecho en clase). */
 function openDeberesModal(id, subjectId, dateIso, classId){
   const existing = id ? state.items.find(i=>i.id===id) : null;
+  const subj = getSubject(subjectId);
+  const hasCalendar = !!(subj && subj.calendarId);
   openModal(`
     <div class="modal-head"><div class="modal-title">${existing?'Editar deberes':'Nuevos deberes'}</div>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
@@ -1682,6 +1695,10 @@ function openDeberesModal(id, subjectId, dateIso, classId){
       <label>¿Qué deberes hay que hacer?</label>
       <textarea id="fDebText" placeholder="Ej. Ejercicios 3, 4 y 5 de la página 32..." style="min-height:150px;">${existing?escapeHtml(existing.notes||existing.title||''):''}</textarea>
     </div>
+    ${hasCalendar ? `<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;cursor:pointer;">
+      <input type="checkbox" id="fDebToCalendar" checked style="width:16px;height:16px;">
+      Escribir también en el calendario de Google vinculado a esta clase
+    </label>` : ''}
     <button class="btn btn-primary" id="fDebSave">${ICONS.pencil} Guardar</button>
     ${existing?`<button class="btn btn-danger" id="fDebDelete">${ICONS.trash} Eliminar</button>`:''}
   `);
@@ -1696,6 +1713,11 @@ function openDeberesModal(id, subjectId, dateIso, classId){
       state.items.push({ id:uid(), type:'task', kind:'deberes', title, date:dateIso, time:'', notes:text, remindDays:0, subjectId, classId, notified:true });
     }
     saveState(); toast('Deberes guardados'); render();
+    const toCalendar = hasCalendar && document.getElementById('fDebToCalendar') && document.getElementById('fDebToCalendar').checked;
+    if(toCalendar){
+      const cls = state.classes.find(c=>c.id===classId);
+      if(cls) pushDeberesToCalendar(subjectId, dateIso, cls, text);
+    }
     openClassOccurrenceModal(classId, dateIso);
   };
   if(existing){
@@ -2435,6 +2457,69 @@ function driveDisconnect(){
   driveTokenExpiry = 0;
   toast('Desconectado de Google Drive');
   render();
+}
+
+/* ==================================================================
+   SINCRONIZACIÓN DE DEBERES CON GOOGLE CALENDAR
+   Busca, dentro del calendario vinculado a la asignatura, el evento que
+   ocupa ese día y esa hora concreta (el hueco de clase ya creado a mano
+   por el profesor) y le añade el texto de los deberes a su descripción.
+   ================================================================== */
+
+/* Busca el evento del calendario que se solapa con [startIso, endIso) ese día. */
+async function calendarFindEventForSlot(token, calendarId, dateIso, startTime, endTime){
+  const timeMin = `${dateIso}T00:00:00Z`;
+  const timeMax = `${dateIso}T23:59:59Z`;
+  const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`
+    + `?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if(!res.ok){
+    if(res.status===404) throw new Error('No se encontró ese calendario. Revisa el ID.');
+    if(res.status===403) throw new Error('Sin permiso para acceder a ese calendario.');
+    throw new Error('No se pudo consultar el calendario');
+  }
+  const data = await res.json();
+  const events = data.items || [];
+  const wantStart = timeToMin(startTime), wantEnd = timeToMin(endTime);
+  // Buscamos el evento cuyo horario se solape con el tramo de la clase (no hace falta que coincida al minuto).
+  return events.find(ev=>{
+    if(!ev.start || !ev.start.dateTime) return false; // ignoramos eventos "todo el día"
+    const evStartMin = new Date(ev.start.dateTime).getUTCHours()*60 + new Date(ev.start.dateTime).getUTCMinutes();
+    const evEndMin = ev.end && ev.end.dateTime ? (new Date(ev.end.dateTime).getUTCHours()*60 + new Date(ev.end.dateTime).getUTCMinutes()) : evStartMin+1;
+    return evStartMin < wantEnd && evEndMin > wantStart;
+  }) || null;
+}
+
+async function calendarUpdateEventDescription(token, calendarId, eventId, description){
+  const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${eventId}`;
+  const res = await fetch(url, {
+    method:'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type':'application/json' },
+    body: JSON.stringify({ description })
+  });
+  if(!res.ok) throw new Error('No se pudo actualizar el evento del calendario');
+  return res.json();
+}
+
+/* Punto de entrada: intenta escribir los deberes en el calendario vinculado de la asignatura,
+   en el evento correspondiente a ese día y tramo horario. No bloquea el guardado local si falla. */
+async function pushDeberesToCalendar(subjectId, dateIso, cls, deberesText){
+  const subj = getSubject(subjectId);
+  if(!subj || !subj.calendarId) return;
+  if(!driveConfigured() || !driveIsConnected()){ toast('Conecta Google Drive/Calendar en Ajustes para sincronizar deberes'); return; }
+  try{
+    const token = await driveGetToken(false);
+    const event = await calendarFindEventForSlot(token, subj.calendarId, dateIso, cls.start, cls.end);
+    if(!event){
+      toast('No se encontró ningún evento en el calendario para ese día y hora. ¿Ya está creado el hueco de esa clase?');
+      return;
+    }
+    const newDescription = deberesText;
+    await calendarUpdateEventDescription(token, subj.calendarId, event.id, newDescription);
+    toast('Deberes escritos también en el calendario de Google');
+  }catch(e){
+    toast('No se pudieron escribir los deberes en el calendario: '+e.message);
+  }
 }
 
 
