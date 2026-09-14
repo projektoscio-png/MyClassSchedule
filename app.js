@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-34';
+const APP_VERSION = '2026-08-22-36';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1723,16 +1723,19 @@ function openDeberesModal(id, subjectId, dateIso, classId){
     const text = document.getElementById('fDebText').value.trim();
     if(!text){ toast('Escribe algo antes de guardar'); return; }
     const title = text.split('\n')[0].slice(0,70);
+    let itemRef;
     if(existing){
       Object.assign(existing, {title, notes:text});
+      itemRef = existing;
     } else {
-      state.items.push({ id:uid(), type:'task', kind:'deberes', title, date:dateIso, time:'', notes:text, remindDays:0, subjectId, classId, notified:true });
+      itemRef = { id:uid(), type:'task', kind:'deberes', title, date:dateIso, time:'', notes:text, remindDays:0, subjectId, classId, notified:true };
+      state.items.push(itemRef);
     }
     saveState(); toast('Deberes guardados'); render();
     const toCalendar = hasCalendar && document.getElementById('fDebToCalendar') && document.getElementById('fDebToCalendar').checked;
     if(toCalendar){
       const cls = state.classes.find(c=>c.id===classId);
-      if(cls) pushDeberesToCalendar(subjectId, dateIso, cls, text);
+      if(cls) pushDeberesToCalendar(subjectId, dateIso, cls, text, itemRef);
     }
     openClassOccurrenceModal(classId, dateIso);
   };
@@ -2545,7 +2548,7 @@ async function calendarUpdateEventDescription(token, calendarId, eventId, descri
 
 /* Punto de entrada: intenta escribir los deberes en el calendario vinculado de la asignatura,
    en el evento correspondiente a ese día y tramo horario. No bloquea el guardado local si falla. */
-async function pushDeberesToCalendar(subjectId, dateIso, cls, deberesText){
+async function pushDeberesToCalendar(subjectId, dateIso, cls, deberesText, itemRef){
   const subj = getSubject(subjectId);
   if(!subj || !subj.calendarId) return { ok:false, reason:'no-calendar', detail:'Esta clase no tiene calendario vinculado.' };
   if(!driveConfigured() || !driveIsConnected()){
@@ -2561,6 +2564,7 @@ async function pushDeberesToCalendar(subjectId, dateIso, cls, deberesText){
       return { ok:false, reason:'no-event', detail:msg };
     }
     await calendarUpdateEventDescription(token, subj.calendarId, event.id, deberesText);
+    if(itemRef){ itemRef.calendarSyncedText = deberesText; saveState(); }
     const msg = deberesText ? 'Deberes escritos también en el calendario de Google' : 'Deberes borrados también del calendario de Google';
     toast(msg);
     return { ok:true, detail:msg, eventId:event.id };
@@ -2604,14 +2608,16 @@ function openSyncDeberesModal(subjectId){
   };
 }
 
-async function syncDeberesBidirectional(subjectId, from, to){
+async function syncDeberesBidirectional(subjectId, from, to, opts){
+  opts = opts || {};
+  const silent = !!opts.silent;
   const subj = getSubject(subjectId);
   const slots = state.classes.filter(c=>c.subjectId===subjectId);
-  if(!driveConfigured() || !driveIsConnected()){ toast('Conecta Google Drive/Calendar en Ajustes'); return; }
+  if(!driveConfigured() || !driveIsConnected()){ if(!silent) toast('Conecta Google Drive/Calendar en Ajustes'); return null; }
 
   let token;
-  try{ token = await driveGetToken(false); }
-  catch(e){ toast('No se pudo conectar con Google: '+e.message); return; }
+  try{ token = await driveGetToken(silent); }
+  catch(e){ if(!silent) toast('No se pudo conectar con Google: '+e.message); return null; }
 
   let events;
   try{
@@ -2624,11 +2630,11 @@ async function syncDeberesBidirectional(subjectId, from, to){
     if(!res.ok) throw new Error('No se pudo leer el calendario');
     const data = await res.json();
     events = (data.items||[]).filter(ev=>ev.start && ev.start.dateTime);
-  }catch(e){ toast('No se pudo leer el calendario: '+e.message); return; }
+  }catch(e){ if(!silent) toast('No se pudo leer el calendario: '+e.message); return null; }
 
-  let pushed=0, pulled=0;
+  let pushed=0, pulled=0, pulledDeletes=0;
   const conflicts = [];
-  const patches = [];
+  const patches = []; // { eventId, description, appItem }
 
   for(let d=from; d<=to; d=addDaysISO(d,1)){
     const dow = dowIndexISO(d);
@@ -2646,12 +2652,19 @@ async function syncDeberesBidirectional(subjectId, from, to){
       const appItem = state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===subjectId && i.date===d && (i.classId?i.classId===slot.id:true));
       const appText = appItem ? (appItem.notes||appItem.title||'').trim() : '';
       const calText = match ? (match.description||'').trim() : '';
+      const previouslySynced = appItem && appItem.calendarSyncedText ? appItem.calendarSyncedText.trim() : '';
 
-      if(appText && !calText && match){
-        patches.push({ eventId: match.id, description: appText });
+      if(!calText && appText && match && previouslySynced){
+        // La app ya había escrito esto en el calendario antes, y ahora está vacío ahí:
+        // se ha borrado a propósito en Google Calendar, así que lo borramos también en la app.
+        state.items = state.items.filter(i=>i.id!==appItem.id);
+        pulledDeletes++;
+      } else if(appText && !calText && match){
+        patches.push({ eventId: match.id, description: appText, appItem });
         pushed++;
       } else if(calText && !appText){
-        state.items.push({ id:uid(), type:'task', kind:'deberes', title: calText.split('\n')[0].slice(0,70), date:d, time:'', notes:calText, remindDays:0, subjectId, classId:slot.id, notified:true });
+        const newItem = { id:uid(), type:'task', kind:'deberes', title: calText.split('\n')[0].slice(0,70), date:d, time:'', notes:calText, remindDays:0, subjectId, classId:slot.id, notified:true, calendarSyncedText: calText };
+        state.items.push(newItem);
         pulled++;
       } else if(appText && calText && appText!==calText){
         conflicts.push(d);
@@ -2660,10 +2673,16 @@ async function syncDeberesBidirectional(subjectId, from, to){
   }
 
   for(const p of patches){
-    try{ await calendarUpdateEventDescription(token, subj.calendarId, p.eventId, p.description); }catch(e){}
+    try{
+      await calendarUpdateEventDescription(token, subj.calendarId, p.eventId, p.description);
+      if(p.appItem) p.appItem.calendarSyncedText = p.description;
+    }catch(e){}
   }
-  if(pulled>0) saveState();
+  if(pulled>0 || pulledDeletes>0) saveState();
   render();
+
+  const result = { pushed, pulled, pulledDeletes, conflicts };
+  if(silent) return result;
 
   openModal(`
     <div class="modal-head"><div class="modal-title">Sincronización completada</div>
@@ -2671,11 +2690,32 @@ async function syncDeberesBidirectional(subjectId, from, to){
     <p style="font-size:13.5px;color:var(--ink);line-height:1.7;">
       <b>${pushed}</b> deberes de la app escritos en el calendario.<br>
       <b>${pulled}</b> deberes del calendario traídos a la app.<br>
+      <b>${pulledDeletes}</b> deberes borrados en la app porque se habían borrado en el calendario.<br>
       ${conflicts.length ? `<b>${conflicts.length}</b> día(s) con contenido distinto en ambos sitios (no tocados): ${conflicts.map(d=>parseISO(d).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'})).join(', ')}` : 'Sin conflictos.'}
     </p>
     <button class="btn btn-primary" id="syncDone">Aceptar</button>
   `);
   document.getElementById('syncDone').onclick=()=>{ closeModal(); openSubjectDetailModal(subjectId); };
+  return result;
+}
+
+/* Al abrir la app: sincroniza en silencio (sin ventanas ni interrumpir) los deberes de
+   todas las clases que tengan un calendario vinculado, en una ventana de fechas cercana
+   a hoy (no todo el curso, para que sea rápido). */
+async function autoSyncDeberesOnLoad(){
+  if(!driveConfigured() || !driveIsConnected()) return;
+  const linked = state.subjects.filter(s=>s.calendarId);
+  if(linked.length===0) return;
+  const from = addDaysISO(todayISO(), -7);
+  const to = addDaysISO(todayISO(), 21);
+  let totalPushed=0, totalPulled=0, totalDeleted=0;
+  for(const subj of linked){
+    const r = await syncDeberesBidirectional(subj.id, from, to, {silent:true});
+    if(r){ totalPushed+=r.pushed; totalPulled+=r.pulled; totalDeleted+=r.pulledDeletes; }
+  }
+  if(totalPushed || totalPulled || totalDeleted){
+    toast(`Deberes sincronizados con Calendar (${totalPushed} enviados, ${totalPulled} traídos, ${totalDeleted} borrados)`);
+  }
 }
 
 
@@ -2762,6 +2802,7 @@ checkReminders();
 setInterval(checkReminders, 60000);
 setTimeout(driveCheckOnLoad, 1200);
 setTimeout(drivePhotosDownloadIfNewer, 1800);
+setTimeout(autoSyncDeberesOnLoad, 2400);
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
