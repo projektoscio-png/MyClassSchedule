@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-28';
+const APP_VERSION = '2026-08-22-29';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -2468,8 +2468,14 @@ function driveDisconnect(){
 
 /* Busca el evento del calendario que se solapa con [startIso, endIso) ese día. */
 async function calendarFindEventForSlot(token, calendarId, dateIso, startTime, endTime){
-  const timeMin = `${dateIso}T00:00:00Z`;
-  const timeMax = `${dateIso}T23:59:59Z`;
+  // Usamos el día en hora LOCAL (no UTC) para acotar la búsqueda, y comparamos
+  // las horas de los eventos también en local: los eventos de Calendar llevan su
+  // propio desfase horario (p.ej. +02:00 en verano), y comparar en UTC desajustaba
+  // la hora real de la clase.
+  const dayStart = parseISO(dateIso);
+  const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate()+1);
+  const timeMin = dayStart.toISOString();
+  const timeMax = dayEnd.toISOString();
   const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`
     + `?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
@@ -2484,8 +2490,10 @@ async function calendarFindEventForSlot(token, calendarId, dateIso, startTime, e
   // Buscamos el evento cuyo horario se solape con el tramo de la clase (no hace falta que coincida al minuto).
   return events.find(ev=>{
     if(!ev.start || !ev.start.dateTime) return false; // ignoramos eventos "todo el día"
-    const evStartMin = new Date(ev.start.dateTime).getUTCHours()*60 + new Date(ev.start.dateTime).getUTCMinutes();
-    const evEndMin = ev.end && ev.end.dateTime ? (new Date(ev.end.dateTime).getUTCHours()*60 + new Date(ev.end.dateTime).getUTCMinutes()) : evStartMin+1;
+    const evStart = new Date(ev.start.dateTime);
+    const evEnd = ev.end && ev.end.dateTime ? new Date(ev.end.dateTime) : new Date(evStart.getTime()+60000);
+    const evStartMin = evStart.getHours()*60 + evStart.getMinutes();
+    const evEndMin = evEnd.getHours()*60 + evEnd.getMinutes();
     return evStartMin < wantEnd && evEndMin > wantStart;
   }) || null;
 }
