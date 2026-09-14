@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-41';
+const APP_VERSION = '2026-08-22-42';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1230,14 +1230,22 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
 /* ==================================================================
    EXÁMENES Y TAREAS
    ================================================================== */
-/* Pestaña Tareas: observaciones y deberes en dos columnas separadas, con el texto completo. */
+/* Pestaña Tareas: observaciones y deberes en dos columnas, alineando en la misma fila
+   lo que sea de la misma asignatura, mismo día y mismo tramo horario. */
 function renderTasksSplitByKind(){
   let items = state.items.filter(i=>i.type==='task');
   if(ui.subjectFilter){ items = items.filter(i=>i.subjectId===ui.subjectFilter); }
-  items = items.sort((a,b)=> a.date===b.date ? 0 : a.date.localeCompare(b.date));
 
-  const obsItems = items.filter(i=>i.kind==='observacion' || !i.kind);
-  const debItems = items.filter(i=>i.kind==='deberes');
+  // Agrupar por ocurrencia: misma asignatura + mismo día + mismo tramo horario (classId)
+  const groups = {};
+  const order = [];
+  items.forEach(i=>{
+    const key = `${i.subjectId||'-'}|${i.date}|${i.classId||'-'}`;
+    if(!groups[key]){ groups[key] = { subjectId:i.subjectId, date:i.date, obs:null, deb:null }; order.push(key); }
+    if(i.kind==='deberes') groups[key].deb = i;
+    else groups[key].obs = i; // observación (o dato antiguo sin "kind")
+  });
+  const rows = order.map(k=>groups[k]).sort((a,b)=> a.date===b.date ? 0 : a.date.localeCompare(b.date));
 
   const usedSubjectIds = [...new Set(state.items.filter(i=>i.type==='task').map(i=>i.subjectId).filter(Boolean))];
   const usedSubjects = usedSubjectIds.map(id=>getSubject(id)).filter(Boolean).sort((a,b)=>a.name.localeCompare(b.name));
@@ -1249,34 +1257,31 @@ function renderTasksSplitByKind(){
     </div>`;
   }
 
-  function renderColumn(list, emptyLabel, emptyEmoji){
-    if(list.length===0){
-      return `<div class="empty-state" style="padding:36px 14px;"><span class="emoji">${emptyEmoji}</span><div class="et">${emptyLabel}</div></div>`;
-    }
-    return list.map(i=>{
-      const subj = i.subjectId ? getSubject(i.subjectId) : null;
-      const dateLabel = capitalize(parseISO(i.date).toLocaleDateString('es-ES',{weekday:'short', day:'numeric', month:'short'}));
-      return `<div class="card task-full-card" data-open-item="${i.id}">
-        <div class="task-full-header">
-          <span class="task-full-date">${dateLabel}</span>
-          ${subj?`<span class="task-full-subject" style="background:${subj.color}22;color:${subj.color}">${escapeHtml(subj.name)}</span>`:''}
-        </div>
-        <div class="task-full-text">${escapeHtml(i.notes||i.title)}</div>
-      </div>`;
-    }).join('');
+  if(rows.length===0){
+    return `${filterHtml}<div class="empty-state"><span class="emoji">📝</span><div class="et">Sin observaciones ni deberes</div><div class="es">Se irán añadiendo desde el Calendario, al tocar una clase.</div></div>`;
   }
+
+  function renderCell(item){
+    if(!item) return `<div class="tareas-cell tareas-cell-empty">—</div>`;
+    const subj = item.subjectId ? getSubject(item.subjectId) : null;
+    const dateLabel = capitalize(parseISO(item.date).toLocaleDateString('es-ES',{weekday:'short', day:'numeric', month:'short'}));
+    return `<div class="tareas-cell card task-full-card" data-open-item="${item.id}">
+      <div class="task-full-header">
+        <span class="task-full-date">${dateLabel}</span>
+        ${subj?`<span class="task-full-subject" style="background:${subj.color}22;color:${subj.color}">${escapeHtml(subj.name)}</span>`:''}
+      </div>
+      <div class="task-full-text">${escapeHtml(item.notes||item.title)}</div>
+    </div>`;
+  }
+
+  const rowsHtml = rows.map(g=> renderCell(g.obs) + renderCell(g.deb)).join('');
 
   return `
     ${filterHtml}
-    <div class="tareas-columns">
-      <div class="tareas-col">
-        <div class="tareas-col-title">📝 Observaciones</div>
-        ${renderColumn(obsItems, 'Sin observaciones', '📝')}
-      </div>
-      <div class="tareas-col">
-        <div class="tareas-col-title">📚 Deberes</div>
-        ${renderColumn(debItems, 'Sin deberes', '📚')}
-      </div>
+    <div class="tareas-grid">
+      <div class="tareas-col-title">📝 Observaciones</div>
+      <div class="tareas-col-title">📚 Deberes</div>
+      ${rowsHtml}
     </div>
   `;
 }
