@@ -59,14 +59,31 @@
 
   const CODE_LABELS = { F:'F (Falta)', R:'R (Retard)', m:'m (No material)', C:'C (Falta lleu)', D:'D (No deures)' };
 
-  /* Busca, entre TODOS los botones de asistencia de esta página que pertenecen a un
-     alumno (comparten el atributo name = su id_per), el que tiene exactamente esa
-     letra (F, R, C, D, m) como texto. No usamos el número interno del botón (value)
-     porque ese número puede ser distinto según el grupo/curso; la letra sí es fija. */
+  /* Busca, entre TODOS los botones de asistencia de esta página, el que pertenece a
+     este alumno (comparando el id_per que aparece dentro de su propio "onclick",
+     ya que el atributo name no siempre está presente en todas las plantillas de
+     iEduca) y cuyo texto visible es exactamente esa letra (F, R, C, D, m). No usamos
+     el número interno del botón (value) porque puede variar según el grupo/curso. */
   function findLetterButton(id_per, letter){
-    const candidates = document.querySelectorAll(`button[name="${id_per}"]`);
+    const candidates = document.querySelectorAll('button[onclick*="n_falta("]');
     for(const b of candidates){
-      if(b.textContent.trim() === letter) return b;
+      if(b.textContent.trim() !== letter) continue;
+      const onclick = b.getAttribute('onclick') || '';
+      const m = onclick.match(/n_falta\(\s*this\s*,\s*'[^']*'\s*,\s*-?\d+\s*,\s*(\d+)/);
+      if(m && m[1] === String(id_per)) return b;
+    }
+    return null;
+  }
+
+  /* Igual que arriba, pero para el enlace [OBS] que abre la ventana de observaciones:
+     no siempre tiene la clase "boto_obs", así que buscamos por lo que hay dentro del
+     propio wopen(...). */
+  function findObsLink(id_per){
+    const candidates = document.querySelectorAll('a[onclick*="assistencia_observacions.php"]');
+    const re = new RegExp('id_per=' + id_per + '(&|\')');
+    for(const a of candidates){
+      const onclick = a.getAttribute('onclick') || '';
+      if(re.test(onclick)) return a;
     }
     return null;
   }
@@ -135,7 +152,7 @@
         else { fail++; failLines.push(`${m.miName}: no se encontró el botón "${code}" en esta página`); }
       });
       if(m.obsText){
-        const obsLink = document.querySelector(`a.boto_obs[onclick*="id_per=${m.matched.id_per}&"]`);
+        const obsLink = findObsLink(m.matched.id_per);
         const m2 = obsLink && obsLink.getAttribute('onclick').match(/wopen\('([^']+)'/);
         if(m2){
           const win = window.open(m2[1], 'mihorario_obs_'+m.matched.id_per, 'width=520,height=650');
