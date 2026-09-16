@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-52';
+const APP_VERSION = '2026-08-22-53';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1122,20 +1122,21 @@ function buildDayRows(subjectId, dateIso){
 /* Prepara los datos de asistencia/actitud/deberes de un día para volcarlos en iEduca
    mediante el marcador (bookmarklet). Solo incluye lo que SÍ se traslada a iEduca:
    F, R, m (asistencia), CC (actitud) y Deures=0. Expulsión y Justificada son solo
-   internos de Mi Horario y no se envían. */
-const IEDUCA_CODE_MAP = { F:4, R:2, m:9 };
+   internos de Mi Horario y no se envían.
+   Usamos las LETRAS (F, R, m, C, D) tal como se ven en los botones de iEduca, en vez
+   de números internos, porque esos números pueden ser distintos según el grupo/curso. */
 function copyDayForIeduca(subjectId, dateIso){
   const subj = getSubject(subjectId);
   const students = state.students.filter(s=>s.subjectId===subjectId).sort((a,b)=>a.name.localeCompare(b.name,'es'));
   if(students.length===0){ toast('Esta clase todavía no tiene alumnos'); return; }
-  const payload = { app:'MiHorario', v:1, date:dateIso, subject:subj?subj.name:'', students:[] };
+  const payload = { app:'MiHorario', v:2, date:dateIso, subject:subj?subj.name:'', students:[] };
   students.forEach(s=>{
     const rec = state.records.find(r=>r.studentId===s.id && r.date===dateIso);
     if(!rec) return;
     const codes = [];
-    (rec.assistencia||[]).forEach(a=>{ if(IEDUCA_CODE_MAP[a]) codes.push(IEDUCA_CODE_MAP[a]); });
-    if(rec.actitud==='CC') codes.push(6);
-    if(rec.deures===0) codes.push(8);
+    (rec.assistencia||[]).forEach(a=>{ if(a==='F'||a==='R'||a==='m') codes.push(a); });
+    if(rec.actitud==='CC') codes.push('C');
+    if(rec.deures===0) codes.push('D');
     // La nota escrita en Mi Horario viaja siempre que haya texto, se haya marcado
     // CC o no (por ejemplo, con AV, o sin ningún código de asistencia).
     const obsText = (rec.actitudNota && rec.actitudNota.trim()) ? rec.actitudNota.trim() : null;

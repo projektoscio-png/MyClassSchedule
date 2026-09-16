@@ -57,7 +57,19 @@
     return;
   }
 
-  const CODE_LABELS = { 1:'A (Assisteix)', 2:'R (Retard)', 4:'F (Falta)', 6:'C (Falta lleu)', 8:'D (No deures)', 9:'m (No material)', 22:'i (Incidència)' };
+  const CODE_LABELS = { F:'F (Falta)', R:'R (Retard)', m:'m (No material)', C:'C (Falta lleu)', D:'D (No deures)' };
+
+  /* Busca, entre TODOS los botones de asistencia de esta página que pertenecen a un
+     alumno (comparten el atributo name = su id_per), el que tiene exactamente esa
+     letra (F, R, C, D, m) como texto. No usamos el número interno del botón (value)
+     porque ese número puede ser distinto según el grupo/curso; la letra sí es fija. */
+  function findLetterButton(id_per, letter){
+    const candidates = document.querySelectorAll(`button[name="${id_per}"]`);
+    for(const b of candidates){
+      if(b.textContent.trim() === letter) return b;
+    }
+    return null;
+  }
 
   const matches = payload.students.map(st=>{
     let best = null, bestScore = 0;
@@ -118,9 +130,9 @@
     matches.forEach(m=>{
       if(!m.matched) return;
       m.codes.forEach(code=>{
-        const btn = document.querySelector(`button[name="${m.matched.id_per}"][value="${code}"]`);
+        const btn = findLetterButton(m.matched.id_per, code);
         if(btn){ btn.click(); ok++; }
-        else { fail++; failLines.push(`${m.miName}: no se encontró el botón para el código ${code}`); }
+        else { fail++; failLines.push(`${m.miName}: no se encontró el botón "${code}" en esta página`); }
       });
       if(m.obsText){
         const obsLink = document.querySelector(`a.boto_obs[onclick*="id_per=${m.matched.id_per}&"]`);
