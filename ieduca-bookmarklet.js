@@ -77,15 +77,15 @@
 
   /* Igual que arriba, pero para el enlace [OBS] que abre la ventana de observaciones:
      no siempre tiene la clase "boto_obs", así que buscamos por lo que hay dentro del
-     propio wopen(...). */
+     propio wopen(...). Puede haber DOS enlaces de observaciones por alumno: uno
+     genérico (solo id_per, sin día/hora) y otro ligado a esta sesión concreta (con
+     data/num/mat). Siempre preferimos el que lleva "data=", que es el correcto. */
   function findObsLink(id_per){
-    const candidates = document.querySelectorAll('a[onclick*="assistencia_observacions.php"]');
-    const re = new RegExp('id_per=' + id_per + '(&|\')');
-    for(const a of candidates){
-      const onclick = a.getAttribute('onclick') || '';
-      if(re.test(onclick)) return a;
-    }
-    return null;
+    const candidates = Array.from(document.querySelectorAll('a[onclick*="assistencia_observacions.php"]'));
+    const idRe = new RegExp('id_per=' + id_per + '(&|\')');
+    const matches = candidates.filter(a => idRe.test(a.getAttribute('onclick') || ''));
+    const withDate = matches.find(a => /[?&]data=/.test(a.getAttribute('onclick') || ''));
+    return withDate || matches[0] || null;
   }
 
   const matches = payload.students.map(st=>{
