@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-43';
+const APP_VERSION = '2026-08-22-44';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1621,9 +1621,29 @@ document.getElementById('notifBtn').onclick = ()=>{
    ================================================================== */
 const overlay = document.getElementById('modalOverlay');
 const sheet = document.getElementById('modalSheet');
-function openModal(html){ sheet.innerHTML = `<div class="modal-handle"></div>${html}`; overlay.classList.add('open'); }
-function closeModal(){ overlay.classList.remove('open'); }
+let modalCloseGuard = null;
+function openModal(html){ modalCloseGuard = null; sheet.innerHTML = `<div class="modal-handle"></div>${html}`; overlay.classList.add('open'); }
+function closeModal(){
+  if(modalCloseGuard){
+    const guard = modalCloseGuard;
+    modalCloseGuard = null;
+    if(guard()===false) return; // el propio formulario ha decidido no cerrar todavía (p.ej. hay un conflicto que corregir)
+  }
+  overlay.classList.remove('open');
+}
 overlay.addEventListener('click', (e)=>{ if(e.target===overlay) closeModal(); });
+
+/* En los cuadros de texto largos (deberes, observaciones...), cada "muesca" de la rueda del
+   ratón desplaza solo 1-2 líneas en vez del salto grande (varias líneas) que pone el navegador
+   por defecto, para que sea más fácil leer con calma mientras se desplaza. */
+document.addEventListener('wheel', (e)=>{
+  const el = e.target && e.target.closest ? e.target.closest('textarea') : null;
+  if(!el) return;
+  e.preventDefault();
+  const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 20;
+  const direction = e.deltaY > 0 ? 1 : -1;
+  el.scrollTop += direction * lineHeight * 1.4;
+}, { passive:false });
 
 function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
@@ -1647,6 +1667,12 @@ function openClassOccurrenceModal(classId, dateIso){
   const showExamField = hasExam || !hasDebOrObs;
   const showDebObsFields = hasDebOrObs || !hasExam;
 
+  // Tramos horarios de esta misma asignatura que caen en un día concreto (para el selector de deberes).
+  function slotsForDate(d){
+    const dow = mondayIndex(parseISO(d));
+    return state.classes.filter(c=>c.subjectId===cls.subjectId && c.days.includes(dow) && classActiveOnDate(c, d));
+  }
+
   openModal(`
     <div class="modal-head">
       <div>
@@ -1663,35 +1689,81 @@ function openClassOccurrenceModal(classId, dateIso){
     ${showDebObsFields ? `
     <div class="field">
       <label>📚 Deberes</label>
-      <textarea id="debText" placeholder="¿Qué deberes hay que hacer?" style="min-height:90px;">${escapeHtml(existingDeb?(existingDeb.notes||existingDeb.title):'')}</textarea>
+      <div class="row2" style="margin-bottom:8px;">
+        <div class="field" style="margin-bottom:0;">
+          <label style="font-size:11px;">Día para el que son</label>
+          <input type="date" id="debDate" value="${dateIso}">
+        </div>
+        <div class="field" style="margin-bottom:0;" id="debSlotWrap">
+          <label style="font-size:11px;">Hora</label>
+          <select id="debSlotSelect"></select>
+        </div>
+      </div>
+      <textarea id="debText" placeholder="¿Qué deberes hay que hacer?" style="min-height:110px;">${escapeHtml(existingDeb?(existingDeb.notes||existingDeb.title):'')}</textarea>
       ${hasCalendar ? `<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-soft);margin-top:8px;cursor:pointer;">
         <input type="checkbox" id="debToCalendar" checked style="width:16px;height:16px;"> Sincronizar con el calendario de Google
       </label>` : ''}
-      ${existingDeb ? `<button type="button" class="settings-action" id="btnDeleteDeb" style="font-size:12px;color:var(--danger);margin-top:6px;">${ICONS.trash} Eliminar deberes</button>` : ''}
+      <button type="button" class="settings-action" id="btnDeleteDeb" style="font-size:12px;color:var(--danger);margin-top:6px;display:${existingDeb?'inline-flex':'none'};">${ICONS.trash} Eliminar deberes</button>
     </div>
     <div class="field">
-      <label>📝 Observación</label>
-      <textarea id="obsText" placeholder="¿Qué se ha hecho o explicado en esta clase?" style="min-height:90px;">${escapeHtml(existingObs?(existingObs.notes||existingObs.title):'')}</textarea>
+      <label>📝 Observación de este día</label>
+      <textarea id="obsText" placeholder="¿Qué se ha hecho o explicado en esta clase?" style="min-height:130px;">${escapeHtml(existingObs?(existingObs.notes||existingObs.title):'')}</textarea>
       ${existingObs ? `<button type="button" class="settings-action" id="btnDeleteObs" style="font-size:12px;color:var(--danger);margin-top:6px;">${ICONS.trash} Eliminar observación</button>` : ''}
     </div>` : ''}
     <button class="btn btn-primary" id="btnSaveOccurrence">${ICONS.pencil} Guardar</button>
     <div style="height:1px;background:var(--line);margin:16px 0;"></div>
-    <button class="btn btn-ghost" id="btnEditClassDef">${ICONS.calSmall} Editar horario de esta clase</button>
+    <button class="btn btn-ghost" id="btnGoToRoster">${ICONS.clipboard} Pasar lista / Registro diario de esta clase</button>
     <button class="btn btn-ghost" id="btnViewSubjectTasks" style="margin-top:8px;">${ICONS.clipboard} Ver tareas de ${escapeHtml(subj?subj.name:'esta asignatura')}</button>
   `);
+
+  // --- Selector de día/hora para los deberes ---
+  let debSelectedSlot = cls;
+  if(showDebObsFields){
+    const debDateInput = document.getElementById('debDate');
+    const debSlotSelect = document.getElementById('debSlotSelect');
+    const debSlotWrap = document.getElementById('debSlotWrap');
+    const debText = document.getElementById('debText');
+    const btnDeleteDeb = document.getElementById('btnDeleteDeb');
+
+    function findDebItem(d, slotId){
+      return state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===cls.subjectId && i.date===d && (i.classId?i.classId===slotId:true)) || null;
+    }
+    function refreshDebSlots(preferSlotId){
+      const d = debDateInput.value;
+      const slots = slotsForDate(d);
+      if(slots.length===0){
+        debSlotWrap.style.display='none';
+        debSelectedSlot = null;
+      } else {
+        debSlotWrap.style.display='';
+        const keep = slots.find(s=>s.id===preferSlotId) ? preferSlotId : slots[0].id;
+        debSlotSelect.innerHTML = slots.map(s=>`<option value="${s.id}" ${s.id===keep?'selected':''}>${s.start}–${s.end}${s.room?' · '+escapeHtml(s.room):''}</option>`).join('');
+        debSlotSelect.style.display = slots.length>1 ? '' : 'none';
+        debSelectedSlot = slots.find(s=>s.id===keep);
+      }
+      const item = debSelectedSlot ? findDebItem(d, debSelectedSlot.id) : null;
+      debText.value = item ? (item.notes||item.title) : '';
+      btnDeleteDeb.style.display = item ? 'inline-flex' : 'none';
+    }
+    refreshDebSlots(classId);
+    debDateInput.addEventListener('change', ()=>refreshDebSlots(null));
+    debSlotSelect.addEventListener('change', ()=>refreshDebSlots(debSlotSelect.value));
+
+    btnDeleteDeb.onclick=()=>{
+      const item = findDebItem(debDateInput.value, debSelectedSlot.id);
+      if(!item) return;
+      state.items = state.items.filter(i=>i.id!==item.id);
+      saveState(); render();
+      if(hasCalendar) pushDeberesToCalendar(cls.subjectId, debDateInput.value, debSelectedSlot, '');
+      else toast('Deberes eliminados');
+      openClassOccurrenceModal(classId, dateIso);
+    };
+  }
 
   const btnDeleteExam = document.getElementById('btnDeleteExam');
   if(btnDeleteExam) btnDeleteExam.onclick=()=>{
     state.items = state.items.filter(i=>i.id!==existingExam.id);
     saveState(); render(); toast('Examen eliminado');
-    openClassOccurrenceModal(classId, dateIso);
-  };
-  const btnDeleteDeb = document.getElementById('btnDeleteDeb');
-  if(btnDeleteDeb) btnDeleteDeb.onclick=()=>{
-    state.items = state.items.filter(i=>i.id!==existingDeb.id);
-    saveState(); render();
-    if(hasCalendar) pushDeberesToCalendar(cls.subjectId, dateIso, cls, '');
-    else toast('Deberes eliminados');
     openClassOccurrenceModal(classId, dateIso);
   };
   const btnDeleteObs = document.getElementById('btnDeleteObs');
@@ -1701,17 +1773,40 @@ function openClassOccurrenceModal(classId, dateIso){
     openClassOccurrenceModal(classId, dateIso);
   };
 
-  document.getElementById('btnSaveOccurrence').onclick=()=>{
+  function hasUnsavedChanges(){
     const examTitle = showExamField && document.getElementById('examTitle') ? document.getElementById('examTitle').value.trim() : '';
-    const debText = showDebObsFields && document.getElementById('debText') ? document.getElementById('debText').value.trim() : '';
     const obsText = showDebObsFields && document.getElementById('obsText') ? document.getElementById('obsText').value.trim() : '';
+    const debTextVal = showDebObsFields && document.getElementById('debText') ? document.getElementById('debText').value.trim() : '';
+    if(showExamField && examTitle !== (existingExam?existingExam.title:'')) return true;
+    if(showDebObsFields && obsText !== (existingObs?(existingObs.notes||existingObs.title):'')) return true;
+    if(showDebObsFields){
+      const debDateInput = document.getElementById('debDate');
+      const d = debDateInput ? debDateInput.value : dateIso;
+      const item = state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===cls.subjectId && i.date===d && (debSelectedSlot?i.classId===debSelectedSlot.id:true));
+      if(debTextVal !== (item?(item.notes||item.title):'')) return true;
+    }
+    return false;
+  }
 
-    if(examTitle && (debText || obsText)){
+  function doSave(){
+    const examTitle = showExamField && document.getElementById('examTitle') ? document.getElementById('examTitle').value.trim() : '';
+    const debTextVal = showDebObsFields && document.getElementById('debText') ? document.getElementById('debText').value.trim() : '';
+    const obsText = showDebObsFields && document.getElementById('obsText') ? document.getElementById('obsText').value.trim() : '';
+    const debDate = showDebObsFields && document.getElementById('debDate') ? document.getElementById('debDate').value : dateIso;
+
+    if(examTitle && (debTextVal || obsText) && debDate===dateIso){
       toast('No puede haber examen a la vez que deberes u observación ese día. Deja uno de los dos en blanco.');
-      return;
+      return false;
+    }
+    if(debTextVal && debSelectedSlot){
+      const examOnDebDate = state.items.find(i=>i.type==='exam' && i.subjectId===cls.subjectId && i.date===debDate && (i.classId?i.classId===debSelectedSlot.id:true));
+      if(examOnDebDate){
+        toast('Ese día ya hay un examen para esa clase, no se pueden poner deberes a la vez.');
+        return false;
+      }
     }
 
-    // Examen
+    // Examen (siempre en el día de esta ficha)
     if(examTitle){
       if(existingExam){ Object.assign(existingExam, {title: examTitle}); }
       else { state.items.push({ id:uid(), type:'exam', title:examTitle, date:dateIso, time:'', notes:'', remindDays:2, subjectId:cls.subjectId, classId, notified:false }); }
@@ -1719,21 +1814,27 @@ function openClassOccurrenceModal(classId, dateIso){
       state.items = state.items.filter(i=>i.id!==existingExam.id);
     }
 
-    // Deberes
-    if(debText){
-      const title = debText.split('\n')[0].slice(0,70);
-      let itemRef;
-      if(existingDeb){ Object.assign(existingDeb, {title, notes:debText}); itemRef = existingDeb; }
-      else { itemRef = { id:uid(), type:'task', kind:'deberes', title, date:dateIso, time:'', notes:debText, remindDays:0, subjectId:cls.subjectId, classId, notified:true }; state.items.push(itemRef); }
-      saveState();
-      const toCalendar = hasCalendar && document.getElementById('debToCalendar') && document.getElementById('debToCalendar').checked;
-      if(toCalendar) pushDeberesToCalendar(cls.subjectId, dateIso, cls, debText, itemRef);
-    } else if(existingDeb && showDebObsFields){
-      state.items = state.items.filter(i=>i.id!==existingDeb.id);
-      if(hasCalendar) pushDeberesToCalendar(cls.subjectId, dateIso, cls, '');
+    // Deberes (en el día/hora elegidos en su propio selector, que puede ser distinto al de esta ficha)
+    if(showDebObsFields && debSelectedSlot){
+      const prevItem = state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===cls.subjectId && i.date===debDate && i.classId===debSelectedSlot.id);
+      const prevText = prevItem ? (prevItem.notes||prevItem.title) : '';
+      const changed = debTextVal !== prevText;
+      if(debTextVal){
+        const title = debTextVal.split('\n')[0].slice(0,70);
+        let itemRef;
+        if(prevItem){ Object.assign(prevItem, {title, notes:debTextVal}); itemRef = prevItem; }
+        else { itemRef = { id:uid(), type:'task', kind:'deberes', title, date:debDate, time:'', notes:debTextVal, remindDays:0, subjectId:cls.subjectId, classId:debSelectedSlot.id, notified:true }; state.items.push(itemRef); }
+        if(changed){
+          const toCalendar = hasCalendar && document.getElementById('debToCalendar') && document.getElementById('debToCalendar').checked;
+          if(toCalendar) pushDeberesToCalendar(cls.subjectId, debDate, debSelectedSlot, debTextVal, itemRef);
+        }
+      } else if(prevItem){
+        state.items = state.items.filter(i=>i.id!==prevItem.id);
+        if(hasCalendar) pushDeberesToCalendar(cls.subjectId, debDate, debSelectedSlot, '');
+      }
     }
 
-    // Observación
+    // Observación (siempre en el día de esta ficha)
     if(obsText){
       const title = obsText.split('\n')[0].slice(0,70);
       if(existingObs){ Object.assign(existingObs, {title, notes:obsText}); }
@@ -1743,10 +1844,22 @@ function openClassOccurrenceModal(classId, dateIso){
     }
 
     saveState(); render(); toast('Guardado');
-    openClassOccurrenceModal(classId, dateIso);
-  };
+    return true;
+  }
 
-  document.getElementById('btnEditClassDef').onclick=()=>{ closeModal(); openClassModal(classId); };
+  document.getElementById('btnSaveOccurrence').onclick=()=>{
+    if(doSave()!==false) openClassOccurrenceModal(classId, dateIso);
+  };
+  modalCloseGuard = ()=>{
+    if(hasUnsavedChanges()) return doSave()!==false;
+    return true;
+  };
+  document.getElementById('btnGoToRoster').onclick=()=>{
+    const students = state.students.filter(s=>s.subjectId===cls.subjectId);
+    if(students.length===0){ toast('Esta clase todavía no tiene alumnos. Ve a Clases → esta clase → Añadir alumno.'); return; }
+    closeModal();
+    openDailyRecordScreen(cls.subjectId, dateIso, students[0].id);
+  };
   document.getElementById('btnViewSubjectTasks').onclick=()=>{
     closeModal(); ui.tab='tasks'; ui.subjectFilter=cls.subjectId; render();
   };
