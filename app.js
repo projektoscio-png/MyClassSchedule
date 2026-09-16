@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-46';
+const APP_VERSION = '2026-08-22-47';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -373,7 +373,9 @@ function renderScheduleWeekGrid(){
       const isShort = height <= 34;
       const textColor = contrastTextColor(color);
       return `<div class="grid-block" data-open-class="${c.id}" data-date="${dateIso}" style="top:${top}px;height:${height}px;background:${color};border-left:3px solid ${color};color:${textColor};">
-        ${(hasExam||hasDeb||hasObs)?`<div class="grid-block-obs">${hasExam?'📕':`${hasDeb?'📚':''}${hasObs?'📝':''}`}</div>`:''}
+        ${hasExam?`<div class="grid-block-icon-exam">📕</div>`:''}
+        ${hasDeb?`<div class="grid-block-icon-deb">📚</div>`:''}
+        ${hasObs?`<div class="grid-block-icon-obs">📝</div>`:''}
         ${isShort ? `
           <div class="grid-block-inline-row">
             <span class="grid-block-name">${escapeHtml(subj?subj.name:'')}</span>
