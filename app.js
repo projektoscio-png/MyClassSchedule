@@ -7,10 +7,18 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-45';
+const APP_VERSION = '2026-08-22-46';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
+/* Devuelve un color de texto legible (oscuro o blanco) según lo clara u oscura que sea la
+   asignatura, para poder pintar el calendario con el color elegido directamente, sin diluirlo. */
+function contrastTextColor(hex){
+  const c = (hex||'#999999').replace('#','');
+  const r = parseInt(c.substr(0,2),16)||0, g = parseInt(c.substr(2,2),16)||0, b = parseInt(c.substr(4,2),16)||0;
+  const luminance = (0.299*r + 0.587*g + 0.114*b)/255;
+  return luminance > 0.62 ? '#22283A' : '#ffffff';
+}
 
 const ICONS = {
   calendar:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>',
@@ -363,7 +371,8 @@ function renderScheduleWeekGrid(){
       const hasDeb = state.items.some(it=>it.type==='task' && it.kind==='deberes' && it.subjectId===c.subjectId && it.date===dateIso && (it.classId ? it.classId===c.id : true));
       const hasExam = state.items.some(it=>it.type==='exam' && it.subjectId===c.subjectId && it.date===dateIso && (it.classId ? it.classId===c.id : true));
       const isShort = height <= 34;
-      return `<div class="grid-block" data-open-class="${c.id}" data-date="${dateIso}" style="top:${top}px;height:${height}px;background:${color}26;border-left:3px solid ${color};">
+      const textColor = contrastTextColor(color);
+      return `<div class="grid-block" data-open-class="${c.id}" data-date="${dateIso}" style="top:${top}px;height:${height}px;background:${color};border-left:3px solid ${color};color:${textColor};">
         ${(hasExam||hasDeb||hasObs)?`<div class="grid-block-obs">${hasExam?'📕':`${hasDeb?'📚':''}${hasObs?'📝':''}`}</div>`:''}
         ${isShort ? `
           <div class="grid-block-inline-row">
@@ -460,17 +469,15 @@ function openNewSubjectModal(){
     <div class="field"><label>Nombre</label><input type="text" id="fSubjName" placeholder="Ej. Matemáticas 2n ESO"></div>
     <div class="field">
       <label>Color</label>
-      <div class="color-grid" id="fSubjColor">${SUBJECT_COLORS.map(c=>`<div class="color-dot ${c===nextColor?'active':''}" data-c="${c}" style="background:${c}"></div>`).join('')}</div>
+      <input type="color" id="fSubjColor" value="${nextColor}" style="width:100%; height:46px; padding:4px; border-radius:12px; border:1.5px solid var(--line); cursor:pointer; background:var(--paper);">
     </div>
     <button class="btn btn-primary" id="fSubjSave">${ICONS.pencil} Crear clase</button>
   `);
-  let selColor = nextColor;
-  document.querySelectorAll('#fSubjColor .color-dot').forEach(b=>b.onclick=()=>{ selColor=b.dataset.c; document.querySelectorAll('#fSubjColor .color-dot').forEach(x=>x.classList.toggle('active',x===b)); });
   document.getElementById('fSubjSave').onclick=()=>{
     const name = document.getElementById('fSubjName').value.trim();
     if(!name){ toast('Escribe un nombre'); return; }
     const subject = getOrCreateSubject(name);
-    subject.color = selColor;
+    subject.color = document.getElementById('fSubjColor').value;
     saveState(); closeModal(); toast('Clase creada');
     openSubjectDetailModal(subject.id);
   };
@@ -489,6 +496,10 @@ function openSubjectDetailModal(subjectId){
         <div class="modal-title">${escapeHtml(subj.name)}</div>
       </div>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button>
+    </div>
+    <div class="field">
+      <label>Color de la asignatura</label>
+      <input type="color" id="fSubjColorPicker" value="${subj.color}" style="width:100%; height:46px; padding:4px; border-radius:12px; border:1.5px solid var(--line); cursor:pointer; background:var(--paper);">
     </div>
     <div class="field">
       <label>Tramos horarios</label>
@@ -564,6 +575,10 @@ function openSubjectDetailModal(subjectId){
       e.stopPropagation();
       pickAndSaveStudentPhoto(el.dataset.editPhoto, ()=>openSubjectDetailModal(subjectId));
     };
+  });
+  document.getElementById('fSubjColorPicker').addEventListener('input', (e)=>{
+    subj.color = e.target.value;
+    saveState(); render();
   });
   document.getElementById('btnSaveCalendarId').onclick=()=>{
     subj.calendarId = document.getElementById('fCalendarId').value.trim();
@@ -2022,10 +2037,6 @@ function openClassModal(id, opts){
       <div style="font-size:11.5px;color:var(--ink-faint);margin-top:6px;">Por ejemplo, del inicio al final del curso, o solo un trimestre concreto.</div>
       <div class="field-error" id="errPeriod">Indica fecha de inicio y de fin</div>
     </div>
-    <div class="field">
-      <label>Color de la asignatura</label>
-      <div class="color-grid" id="fColor">${SUBJECT_COLORS.map(c=>`<div class="color-dot ${c===chosenColor?'active':''}" data-c="${c}" style="background:${c}"></div>`).join('')}</div>
-    </div>
     <button class="btn btn-primary" id="fSave">${ICONS.pencil} Guardar</button>
     ${existing?`<button class="btn btn-danger" id="fDelete">${ICONS.trash} Eliminar este tramo</button>`:''}
   `);
@@ -2044,7 +2055,7 @@ function openClassModal(id, opts){
       if(selDays.length) clearFieldError('fieldDays','errDays');
     };
   });
-  document.querySelectorAll('#fColor .color-dot').forEach(b=>b.onclick=()=>{ selColor=b.dataset.c; document.querySelectorAll('#fColor .color-dot').forEach(x=>x.classList.toggle('active',x===b)); });
+
 
   const fStartEl = document.getElementById('fStart'), fEndEl = document.getElementById('fEnd');
   fEndEl.addEventListener('input', ()=>{ endManuallyEdited = true; if(fEndEl.value) clearFieldError('fieldEnd','errEnd'); });
