@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-49';
+const APP_VERSION = '2026-08-22-52';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1086,8 +1086,15 @@ function openExportRangeModal(subjectId){
       <input type="date" id="expDay" value="${todayISO()}">
     </div>
     <button class="btn btn-primary" id="expGo">${ICONS.download} Descargar Excel</button>
+    <button class="btn btn-ghost" id="expIeduca" style="margin-top:8px;">📋 Copiar para iEduca</button>
   `);
 
+  document.getElementById('expIeduca').onclick=()=>{
+    const sid = document.getElementById('expSubject').value;
+    const day = document.getElementById('expDay').value;
+    if(!day){ toast('Indica un día'); return; }
+    copyDayForIeduca(sid, day);
+  };
   document.getElementById('expGo').onclick=()=>{
     const sid = document.getElementById('expSubject').value;
     const day = document.getElementById('expDay').value;
@@ -1111,6 +1118,56 @@ function buildDayRows(subjectId, dateIso){
     };
   });
 }
+
+/* Prepara los datos de asistencia/actitud/deberes de un día para volcarlos en iEduca
+   mediante el marcador (bookmarklet). Solo incluye lo que SÍ se traslada a iEduca:
+   F, R, m (asistencia), CC (actitud) y Deures=0. Expulsión y Justificada son solo
+   internos de Mi Horario y no se envían. */
+const IEDUCA_CODE_MAP = { F:4, R:2, m:9 };
+function copyDayForIeduca(subjectId, dateIso){
+  const subj = getSubject(subjectId);
+  const students = state.students.filter(s=>s.subjectId===subjectId).sort((a,b)=>a.name.localeCompare(b.name,'es'));
+  if(students.length===0){ toast('Esta clase todavía no tiene alumnos'); return; }
+  const payload = { app:'MiHorario', v:1, date:dateIso, subject:subj?subj.name:'', students:[] };
+  students.forEach(s=>{
+    const rec = state.records.find(r=>r.studentId===s.id && r.date===dateIso);
+    if(!rec) return;
+    const codes = [];
+    (rec.assistencia||[]).forEach(a=>{ if(IEDUCA_CODE_MAP[a]) codes.push(IEDUCA_CODE_MAP[a]); });
+    if(rec.actitud==='CC') codes.push(6);
+    if(rec.deures===0) codes.push(8);
+    // La nota escrita en Mi Horario viaja siempre que haya texto, se haya marcado
+    // CC o no (por ejemplo, con AV, o sin ningún código de asistencia).
+    const obsText = (rec.actitudNota && rec.actitudNota.trim()) ? rec.actitudNota.trim() : null;
+    if(codes.length || obsText){
+      const entry = { name:s.name, codes };
+      if(obsText) entry.obsText = obsText;
+      payload.students.push(entry);
+    }
+  });
+  if(payload.students.length===0){ toast('No hay nada que trasladar a iEduca para ese día (ni F/R/m, ni CC, ni Deures=0)'); return; }
+  const text = JSON.stringify(payload);
+  const finish = ()=>{
+    openModal(`
+      <div class="modal-head"><div class="modal-title">Copiado para iEduca</div>
+        <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+      <p style="font-size:13.5px;color:var(--ink);line-height:1.6;">
+        Se ha copiado al portapapeles la información de <b>${payload.students.length}</b> alumno(s) para el ${dateLabel(dateIso)}.<br><br>
+        Ahora ve a la pestaña de iEduca donde pasas lista de <b>${escapeHtml(subj?subj.name:'')}</b> ese mismo día, y pulsa el marcador "Volcar a iEduca" que tienes guardado en tu navegador.
+      </p>
+      <button class="btn btn-primary" id="ieducaCopyDone">Entendido</button>
+    `);
+    document.getElementById('ieducaCopyDone').onclick=()=>closeModal();
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(finish).catch(()=>{
+      toast('No se pudo copiar automáticamente. Revisa los permisos del navegador.');
+    });
+  } else {
+    toast('Tu navegador no permite copiar automáticamente aquí.');
+  }
+}
+function dateLabel(dateIso){ return parseISO(dateIso).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'numeric'}); }
 
 function exportDayXlsx(subjectId, dateIso){
   if(typeof XLSX==='undefined'){ toast('No se pudo cargar el generador de Excel. Revisa tu conexión.'); return; }
@@ -1187,7 +1244,7 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
 
     <div class="dr-field">
       <label>Assistència</label>
-      ${chipRow('drAssist', ['F','R','J','E'], rec.assistencia, true)}
+      ${chipRow('drAssist', ['F','R','J','E','m'], rec.assistencia, true)}
     </div>
     <div class="dr-field">
       <label>Actitud</label>
