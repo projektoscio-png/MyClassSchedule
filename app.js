@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-47';
+const APP_VERSION = '2026-08-22-48';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -2463,6 +2463,7 @@ function checkReminders(){
   if(!('Notification' in window) || Notification.permission!=='granted') return;
   if(state.settings.notificationsEnabled === false) return;
   const today = todayISO();
+  let changed = false;
   state.items.forEach(i=>{
     const diff = daysBetween(today,i.date);
     if(diff>=0 && diff<=(i.remindDays??2) && !i.notified){
@@ -2472,9 +2473,13 @@ function checkReminders(){
         });
       }catch(e){}
       i.notified = true;
+      changed = true;
     }
   });
-  saveState();
+  // Solo se guarda (y por tanto solo se "envejece" la marca de última modificación
+  // usada para la sincronización) si de verdad ha habido algún aviso nuevo, nunca
+  // solo por tener la app abierta sin haber cambiado nada.
+  if(changed) saveState();
 }
 
 /* ==================================================================
