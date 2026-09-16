@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-48';
+const APP_VERSION = '2026-08-22-49';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -540,6 +540,7 @@ function openSubjectDetailModal(subjectId){
         <div class="student-list-row" data-open-student="${s.id}">
           <div class="student-avatar" data-photo-for="${s.id}" data-edit-photo="${s.id}" title="Toca para añadir/cambiar foto">${escapeHtml((s.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
           <span class="student-list-name">${escapeHtml(s.name)}</span>
+          <button data-edit-student="${s.id}" aria-label="Editar nombre" class="student-list-del" style="color:var(--ink-soft);">${ICONS.pencil}</button>
           <button data-del-student="${s.id}" aria-label="Eliminar" class="student-list-del">${ICONS.x}</button>
         </div>
       `).join('')}</div>` : `<div style="font-size:13px;color:var(--ink-faint);">Todavía no hay alumnos en esta clase.</div>`}
@@ -568,6 +569,9 @@ function openSubjectDetailModal(subjectId){
       deletePhoto(sid);
       saveState(); render(); openSubjectDetailModal(subjectId); toast('Alumno eliminado');
     };
+  });
+  document.querySelectorAll('[data-edit-student]').forEach(el=>{
+    el.onclick=(e)=>{ e.stopPropagation(); openEditStudentNameModal(el.dataset.editStudent, subjectId); };
   });
   document.querySelectorAll('[data-open-student]').forEach(el=>{
     el.onclick=()=>{ closeModal(); openDailyRecordScreen(subjectId, todayISO(), el.dataset.openStudent); };
@@ -659,6 +663,38 @@ function openAddStudentModal(subjectId){
     const name = surname && firstname ? `${surname}, ${firstname}` : (surname || firstname);
     state.students.push({ id:uid(), subjectId, name });
     saveState(); render(); closeModal(); openSubjectDetailModal(subjectId); toast('Alumno añadido');
+  };
+  [inpSur, inpName].forEach(el=> el.addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('fStudentSave').click(); }));
+}
+
+/* Editar el nombre de un alumno ya existente. Como las observaciones, faltas, fotos, etc.
+   están ligadas al alumno por su id interno (no por el nombre), corregir el nombre no
+   afecta a nada de lo que ya se hubiera guardado con él. */
+function openEditStudentNameModal(studentId, subjectId){
+  const student = state.students.find(s=>s.id===studentId);
+  if(!student) return;
+  const parts = student.name.split(',');
+  const currentSurname = (parts[0]||'').trim();
+  const currentFirstname = (parts[1]||'').trim();
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Editar nombre</div>
+      <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+    <div class="row2">
+      <div class="field"><label>Apellidos</label><input type="text" id="fStudentSurname" value="${escapeHtml(currentSurname)}"></div>
+      <div class="field"><label>Nombre</label><input type="text" id="fStudentFirstname" value="${escapeHtml(currentFirstname)}"></div>
+    </div>
+    <p style="font-size:11.5px;color:var(--ink-faint);margin-top:-8px;">Las observaciones, faltas, deberes y fotos ya guardados se mantienen, solo cambia el nombre.</p>
+    <button class="btn btn-primary" id="fStudentSave">${ICONS.pencil} Guardar</button>
+  `);
+  const inpSur = document.getElementById('fStudentSurname');
+  const inpName = document.getElementById('fStudentFirstname');
+  inpSur.focus();
+  document.getElementById('fStudentSave').onclick=()=>{
+    const surname = inpSur.value.trim();
+    const firstname = inpName.value.trim();
+    if(!surname && !firstname){ toast('Escribe al menos el nombre o los apellidos'); return; }
+    student.name = surname && firstname ? `${surname}, ${firstname}` : (surname || firstname);
+    saveState(); render(); closeModal(); openSubjectDetailModal(subjectId); toast('Nombre actualizado');
   };
   [inpSur, inpName].forEach(el=> el.addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('fStudentSave').click(); }));
 }
