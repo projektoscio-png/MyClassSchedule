@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-44';
+const APP_VERSION = '2026-08-22-45';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1669,6 +1669,7 @@ function openClassOccurrenceModal(classId, dateIso){
 
   // Tramos horarios de esta misma asignatura que caen en un día concreto (para el selector de deberes).
   function slotsForDate(d){
+    if(holidayForDate(d)) return [];
     const dow = mondayIndex(parseISO(d));
     return state.classes.filter(c=>c.subjectId===cls.subjectId && c.days.includes(dow) && classActiveOnDate(c, d));
   }
@@ -1725,6 +1726,8 @@ function openClassOccurrenceModal(classId, dateIso){
     const debText = document.getElementById('debText');
     const btnDeleteDeb = document.getElementById('btnDeleteDeb');
 
+    let lastValidDebDate = debDateInput.value;
+    let lastValidSlotId = classId;
     function findDebItem(d, slotId){
       return state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===cls.subjectId && i.date===d && (i.classId?i.classId===slotId:true)) || null;
     }
@@ -1732,16 +1735,18 @@ function openClassOccurrenceModal(classId, dateIso){
       const d = debDateInput.value;
       const slots = slotsForDate(d);
       if(slots.length===0){
-        debSlotWrap.style.display='none';
-        debSelectedSlot = null;
-      } else {
-        debSlotWrap.style.display='';
-        const keep = slots.find(s=>s.id===preferSlotId) ? preferSlotId : slots[0].id;
-        debSlotSelect.innerHTML = slots.map(s=>`<option value="${s.id}" ${s.id===keep?'selected':''}>${s.start}–${s.end}${s.room?' · '+escapeHtml(s.room):''}</option>`).join('');
-        debSlotSelect.style.display = slots.length>1 ? '' : 'none';
-        debSelectedSlot = slots.find(s=>s.id===keep);
+        toast('Ese día no hay clase de esta asignatura. Elige otro día.');
+        debDateInput.value = lastValidDebDate;
+        return refreshDebSlots(lastValidSlotId);
       }
-      const item = debSelectedSlot ? findDebItem(d, debSelectedSlot.id) : null;
+      lastValidDebDate = d;
+      debSlotWrap.style.display='';
+      const keep = slots.find(s=>s.id===preferSlotId) ? preferSlotId : slots[0].id;
+      debSlotSelect.innerHTML = slots.map(s=>`<option value="${s.id}" ${s.id===keep?'selected':''}>${s.start}–${s.end}${s.room?' · '+escapeHtml(s.room):''}</option>`).join('');
+      debSlotSelect.style.display = slots.length>1 ? '' : 'none';
+      debSelectedSlot = slots.find(s=>s.id===keep);
+      lastValidSlotId = debSelectedSlot.id;
+      const item = findDebItem(d, debSelectedSlot.id);
       debText.value = item ? (item.notes||item.title) : '';
       btnDeleteDeb.style.display = item ? 'inline-flex' : 'none';
     }
