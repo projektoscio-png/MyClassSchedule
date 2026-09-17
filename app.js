@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-55';
+const APP_VERSION = '2026-08-22-56';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1088,7 +1088,15 @@ function openExportRangeModal(subjectId){
     </div>
     <button class="btn btn-primary" id="expGo">${ICONS.download} Descargar Excel</button>
     <button class="btn btn-ghost" id="expIeduca" style="margin-top:8px;">📋 Copiar para iEduca</button>
+    <button class="btn btn-ghost" id="expIeducaPaste" style="margin-top:8px;">📥 Pegar desde iEduca</button>
   `);
+
+  document.getElementById('expIeducaPaste').onclick=()=>{
+    const sid = document.getElementById('expSubject').value;
+    const day = document.getElementById('expDay').value;
+    if(!day){ toast('Indica un día'); return; }
+    pasteDayFromIeduca(sid, day);
+  };
 
   document.getElementById('expIeduca').onclick=()=>{
     const sid = document.getElementById('expSubject').value;
@@ -1170,6 +1178,92 @@ function copyDayForIeduca(subjectId, dateIso){
   }
 }
 function dateLabel(dateIso){ return parseISO(dateIso).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'numeric'}); }
+
+/* Trae de vuelta lo que el marcador "Leer de iEduca" copió al portapapeles: para cada
+   alumno emparejado, muestra qué se propone cambiar en el registro diario de Mi
+   Horario, y solo aplica tras confirmar. F/R/m se sincronizan tal cual (añadiendo o
+   quitando, sin tocar J/E que son solo de Mi Horario); C solo añade CC si no había ya
+   otra actitud puesta; D solo pone Deures=0 si no había ya otro valor puesto; la nota
+   solo se copia si Mi Horario no tenía ya una escrita (si hay una distinta, se marca
+   como conflicto y no se toca, para no perder nada). */
+function normalizeNameForMatch(s){
+  return (s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z\s]/g,' ').replace(/\s+/g,' ').trim();
+}
+function nameMatchScore(a, b){
+  const wa = normalizeNameForMatch(a).split(' ').filter(Boolean);
+  const wb = normalizeNameForMatch(b).split(' ').filter(Boolean);
+  if(wa.length===0) return 0;
+  let hits = 0; wa.forEach(w=>{ if(wb.includes(w)) hits++; });
+  return hits/wa.length;
+}
+
+async function pasteDayFromIeduca(subjectId, dateIso){
+  let raw;
+  try{ raw = await navigator.clipboard.readText(); }
+  catch(e){ toast('No se pudo leer el portapapeles. Revisa los permisos del navegador.'); return; }
+  let payload;
+  try{ payload = JSON.parse(raw); if(payload.app!=='MiHorario' || payload.mode!=='import') throw 0; }
+  catch(e){ toast('No hay ningún dato copiado desde el marcador "Leer de iEduca". Cópialo primero allí.'); return; }
+
+  const subj = getSubject(subjectId);
+  const students = state.students.filter(s=>s.subjectId===subjectId);
+  const plan = payload.students.map(st=>{
+    let best = null, bestScore = 0;
+    students.forEach(s=>{ const sc = nameMatchScore(st.name, s.name); if(sc>bestScore){ bestScore=sc; best=s; } });
+    const matched = (best && bestScore>=0.5) ? best : null;
+    const rec = matched ? (state.records.find(r=>r.studentId===matched.id && r.date===dateIso) || null) : null;
+    const changes = [];
+    let conflict = null;
+    if(matched){
+      if(st.codes.includes('C') && rec?.actitud && rec.actitud!=='CC') conflict = `Ya tiene Actitud=${rec.actitud} en Mi Horario`;
+      if(st.obsText && rec?.actitudNota && rec.actitudNota.trim() && rec.actitudNota.trim()!==st.obsText.trim()){
+        conflict = (conflict?conflict+'; ':'') + 'ya hay una nota distinta escrita';
+      }
+      if(st.codes.includes('F')) changes.push('Falta');
+      if(st.codes.includes('R')) changes.push('Retraso');
+      if(st.codes.includes('m')) changes.push('Material');
+      if(st.codes.includes('C') && (!rec || !rec.actitud || rec.actitud==='CC')) changes.push('Actitud CC');
+      if(st.codes.includes('D') && (!rec || rec.deures==null || rec.deures===0)) changes.push('Deures=0');
+      if(st.obsText && (!rec || !rec.actitudNota || !rec.actitudNota.trim())) changes.push('Nota: "'+(st.obsText.length>50?st.obsText.slice(0,50)+'…':st.obsText)+'"');
+    }
+    return { ieducaName: st.name, matched, changes, conflict, codes:st.codes, obsText:st.obsText };
+  });
+
+  const rows = plan.map(p=>{
+    if(!p.matched) return `<div class="card" style="padding:10px 12px;margin-bottom:6px;"><b style="color:var(--danger);">${escapeHtml(p.ieducaName)}</b><div style="font-size:12px;color:var(--ink-faint);">Sin coincidencia clara en esta clase, no se tocará.</div></div>`;
+    return `<div class="card" style="padding:10px 12px;margin-bottom:6px;">
+      <b>${escapeHtml(p.matched.name)}</b>
+      <div style="font-size:12.5px;color:var(--ink-soft);margin-top:2px;">${p.changes.length?escapeHtml(p.changes.join(' · ')):'Sin cambios'}</div>
+      ${p.conflict?`<div style="font-size:11.5px;color:var(--danger);margin-top:2px;">⚠ ${escapeHtml(p.conflict)} — no se tocará</div>`:''}
+    </div>`;
+  }).join('');
+
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Pegar desde iEduca</div>
+      <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+    <p style="font-size:13px;color:var(--ink-soft);margin-bottom:12px;">Revisa antes de aplicar. Lo que salga en rojo o con conflicto no se tocará.</p>
+    <div style="max-height:50vh;overflow-y:auto;">${rows}</div>
+    <button class="btn btn-primary" id="ieducaPasteApply" style="margin-top:10px;">Aplicar</button>
+  `);
+
+  document.getElementById('ieducaPasteApply').onclick=()=>{
+    let applied = 0;
+    plan.forEach(p=>{
+      if(!p.matched || p.conflict) return;
+      let rec = state.records.find(r=>r.studentId===p.matched.id && r.date===dateIso);
+      if(!rec){ rec = { id:uid(), studentId:p.matched.id, date:dateIso, assistencia:[], actitud:null, actitudNota:'', deures:null, participacio:null, gestio:null }; state.records.push(rec); }
+      // F/R/m se sincronizan tal cual (sin tocar J/E, que son solo de Mi Horario)
+      rec.assistencia = (rec.assistencia||[]).filter(a=>a!=='F'&&a!=='R'&&a!=='m');
+      ['F','R','m'].forEach(c=>{ if(p.codes.includes(c)) rec.assistencia.push(c); });
+      if(p.codes.includes('C') && (!rec.actitud || rec.actitud==='CC')) rec.actitud = 'CC';
+      if(p.codes.includes('D') && (rec.deures==null || rec.deures===0)) rec.deures = 0;
+      if(p.obsText && (!rec.actitudNota || !rec.actitudNota.trim())) rec.actitudNota = p.obsText;
+      applied++;
+    });
+    saveState(); render(); closeModal();
+    toast(`Aplicado a ${applied} alumno(s) desde iEduca`);
+  };
+}
 
 function exportDayXlsx(subjectId, dateIso){
   if(typeof XLSX==='undefined'){ toast('No se pudo cargar el generador de Excel. Revisa tu conexión.'); return; }
