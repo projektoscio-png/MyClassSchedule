@@ -7,10 +7,15 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-57';
+const APP_VERSION = '2026-08-22-58';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
+const IEDUCA_SITE_BASE = 'https://projektoscio-png.github.io/MyClassSchedule';
+const IEDUCA_BOOKMARKLETS = {
+  volcar: `javascript:(function(){var s=document.createElement('script');s.src='${IEDUCA_SITE_BASE}/ieduca-bookmarklet.js?t='+Date.now();document.body.appendChild(s);})();`,
+  leer: `javascript:(function(){var s=document.createElement('script');s.src='${IEDUCA_SITE_BASE}/ieduca-bookmarklet-leer.js?t='+Date.now();document.body.appendChild(s);})();`,
+};
 /* Devuelve un color de texto legible (oscuro o blanco) según lo clara u oscura que sea la
    asignatura, para poder pintar el calendario con el color elegido directamente, sin diluirlo. */
 function contrastTextColor(hex){
@@ -1686,6 +1691,29 @@ function renderHolidays(){
     </div>
   </div>
   <div class="card">
+    <div class="settings-item" style="align-items:flex-start;">
+      <div class="settings-icon">${ICONS.clipboard}</div>
+      <div class="settings-text">
+        <div class="settings-title">Marcadores para iEduca</div>
+        <div class="settings-desc">Copia el código y guárdalo como marcador en tu navegador (nombre libre, pega esto como URL).</div>
+        <div style="margin-top:12px;">
+          <div style="font-size:12.5px;font-weight:700;color:var(--ink-soft);margin-bottom:4px;">Volcar a iEduca (escribir)</div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <code id="bmVolcarCode" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--bg);padding:8px 10px;border-radius:8px;font-size:11px;">${escapeHtml(IEDUCA_BOOKMARKLETS.volcar)}</code>
+            <button class="settings-action" id="btnCopyBmVolcar">Copiar</button>
+          </div>
+        </div>
+        <div style="margin-top:12px;">
+          <div style="font-size:12.5px;font-weight:700;color:var(--ink-soft);margin-bottom:4px;">Leer de iEduca</div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <code id="bmLeerCode" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--bg);padding:8px 10px;border-radius:8px;font-size:11px;">${escapeHtml(IEDUCA_BOOKMARKLETS.leer)}</code>
+            <button class="settings-action" id="btnCopyBmLeer">Copiar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
     <div class="settings-item">
       <div class="settings-icon">${ICONS.chart}</div>
       <div class="settings-text">
@@ -1778,6 +1806,14 @@ function bindContentEvents(){
   if(fileImport) fileImport.onchange = importData;
   const btnExportAllRecords = document.getElementById('btnExportAllRecords');
   if(btnExportAllRecords) btnExportAllRecords.onclick = ()=>openExportRangeModal(null);
+  const btnCopyBmVolcar = document.getElementById('btnCopyBmVolcar');
+  if(btnCopyBmVolcar) btnCopyBmVolcar.onclick = ()=>{
+    navigator.clipboard.writeText(IEDUCA_BOOKMARKLETS.volcar).then(()=>toast('Copiado. Pégalo como URL al crear el marcador.')).catch(()=>toast('No se pudo copiar'));
+  };
+  const btnCopyBmLeer = document.getElementById('btnCopyBmLeer');
+  if(btnCopyBmLeer) btnCopyBmLeer.onclick = ()=>{
+    navigator.clipboard.writeText(IEDUCA_BOOKMARKLETS.leer).then(()=>toast('Copiado. Pégalo como URL al crear el marcador.')).catch(()=>toast('No se pudo copiar'));
+  };
   const btnReset = document.getElementById('btnReset');
   if(btnReset) btnReset.onclick = confirmReset;
   const weekModeSeg = document.getElementById('weekModeSeg');
