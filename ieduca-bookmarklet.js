@@ -138,12 +138,9 @@
     const resultBox = document.getElementById('mihorario-ieduca-result');
     let ok = 0, fail = 0;
     const failLines = [];
-    // Los que tengan nota de Actitud (CC) necesitan también rellenar la ventana de
-    // observaciones. Se abren TODAS las ventanas ahora mismo, dentro de este mismo
-    // clic, para que el navegador no bloquee los popups por abrirse "sin que el
-    // usuario haya hecho nada" (si se abrieran más tarde, tras una espera, el
-    // navegador podría considerarlos spam y bloquearlos).
-    const obsQueue = [];
+
+    // Primero los botones de asistencia/actitud/material (no necesitan ventana emergente).
+    const obsQueue = []; // alumnos que además necesitan que se escriba su observación
     matches.forEach(m=>{
       if(!m.matched) return;
       m.codes.forEach(code=>{
@@ -151,46 +148,58 @@
         if(btn){ btn.click(); ok++; }
         else { fail++; failLines.push(`${m.miName}: no se encontró el botón "${code}" en esta página`); }
       });
-      if(m.obsText){
-        const obsLink = findObsLink(m.matched.id_per);
-        const m2 = obsLink && obsLink.getAttribute('onclick').match(/wopen\('([^']+)'/);
-        if(m2){
-          const win = window.open(m2[1], 'mihorario_obs_'+m.matched.id_per, 'width=520,height=650');
-          if(win) obsQueue.push({ win, name:m.miName, text:m.obsText });
-          else failLines.push(`${m.miName}: el navegador bloqueó la ventana de observación (permite popups para este sitio e inténtalo de nuevo)`);
-        } else {
-          failLines.push(`${m.miName}: no se encontró el enlace de observaciones en la página`);
-        }
-      }
+      if(m.obsText) obsQueue.push(m);
     });
 
-    function fillObsWindow(item){
+    // Para las observaciones: se abre UNA sola ventana, con el mismo nombre fijo que
+    // usa la propia iEduca ('obs'), y se reutiliza cambiándole la dirección para cada
+    // alumno -- si se abriera una ventana nueva y distinta por cada uno, el navegador
+    // las trataría como "ventanas emergentes no pedidas" y bloquearía casi todas.
+    function waitLoaded(win){
       return new Promise((resolve)=>{
         const start = Date.now();
-        const tryFill = ()=>{
+        const tryCheck = ()=>{
           let doc;
-          try{ doc = item.win.document; }catch(e){ doc = null; }
-          const textarea = doc && doc.getElementById && doc.getElementById('text');
-          if(textarea){
-            textarea.value = item.text;
-            const form = doc.getElementById('form1');
-            const submitBtn = form && form.querySelector('button[type="submit"]');
-            if(submitBtn) submitBtn.click(); else if(form) form.submit();
-            setTimeout(()=>{ try{ item.win.close(); }catch(e){} resolve(true); }, 900);
-          } else if(Date.now() - start > 8000){
-            resolve(false); // no cargó a tiempo; se deja abierta para que el usuario la revise a mano
-          } else {
-            setTimeout(tryFill, 200);
-          }
+          try{ doc = win.document; }catch(e){ doc = null; }
+          if(doc && doc.getElementById && doc.getElementById('text')) resolve(doc);
+          else if(Date.now() - start > 8000) resolve(null);
+          else setTimeout(tryCheck, 150);
         };
-        tryFill();
+        tryCheck();
       });
+    }
+    function fillAndSubmit(doc, text){
+      doc.getElementById('text').value = text;
+      const form = doc.getElementById('form1');
+      const submitBtn = form && form.querySelector('button[type="submit"]');
+      if(submitBtn) submitBtn.click(); else if(form) form.submit();
     }
 
     (async ()=>{
-      for(const item of obsQueue){
-        const filled = await fillObsWindow(item);
-        if(filled) ok++; else failLines.push(`${item.name}: la ventana de observación no cargó a tiempo, revísala a mano (se ha dejado abierta)`);
+      if(obsQueue.length){
+        const firstLink = findObsLink(obsQueue[0].matched.id_per);
+        const m0 = firstLink && firstLink.getAttribute('onclick').match(/wopen\('([^']+)'/);
+        const sharedWin = m0 ? window.open(m0[1], 'obs', 'width=520,height=650') : null;
+        if(!sharedWin){
+          obsQueue.forEach(m=>failLines.push(`${m.miName}: el navegador bloqueó la ventana de observación (permite popups para este sitio e inténtalo de nuevo)`));
+        } else {
+          for(let i=0; i<obsQueue.length; i++){
+            const m = obsQueue[i];
+            const link = findObsLink(m.matched.id_per);
+            const url = link && link.getAttribute('onclick').match(/wopen\('([^']+)'/);
+            if(!url){ failLines.push(`${m.miName}: no se encontró el enlace de observaciones en la página`); continue; }
+            if(i>0) sharedWin.location.href = url[1];
+            const doc = await waitLoaded(sharedWin);
+            if(doc){
+              fillAndSubmit(doc, m.obsText);
+              await new Promise(r=>setTimeout(r, 700));
+              ok++;
+            } else {
+              failLines.push(`${m.miName}: la ventana de observación no cargó a tiempo`);
+            }
+          }
+          try{ sharedWin.close(); }catch(e){}
+        }
       }
       resultBox.textContent = `Aplicado: ${ok} acción(es) correctamente.` + (failLines.length ? `\n${failLines.length} aviso(s):\n` + failLines.join('\n') : '');
     })();

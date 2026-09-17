@@ -1,11 +1,11 @@
 /* ==================================================================
    iEduca -> Mi Horario
    Se ejecuta EN la página de iEduca (mediante el marcador guardado en
-   el navegador). Lee, para cada alumno de esta pantalla de pasar
-   lista, si tiene marcado F, R, m o C, y también intenta leer sus
-   observaciones de este día (abriendo su ventana emergente). Al
-   terminar, muestra un resumen y copia el resultado al portapapeles
-   para pegarlo en Mi Horario con "Pegar desde iEduca".
+   el navegador). Lee la asistencia/actitud/material directamente de
+   la página, y las observaciones abriendo UNA sola ventana emergente
+   que se reutiliza (se le cambia la dirección) para cada alumno, en
+   vez de abrir una ventana nueva por cada uno -- así el navegador no
+   la bloquea, igual que hace la propia iEduca con su enlace [OBS].
    ================================================================== */
 (async function(){
 
@@ -19,7 +19,6 @@
   }
   closeOverlay();
 
-  // Directorio de alumnos de esta página: id_per -> nombre
   const directory = [];
   document.querySelectorAll('a.nom_al, .nom_al a').forEach(a=>{
     const href = a.getAttribute('href') || '';
@@ -31,8 +30,7 @@
     return;
   }
 
-  // Fecha/asignatura para el encabezado del resumen (best effort, a partir del título de la página o de un enlace de observaciones)
-  let fecha = '', asignatura = document.title || '';
+  let fecha = '';
   const anyObsOnclick = document.querySelector('a[onclick*="assistencia_observacions.php"]');
   if(anyObsOnclick){
     const m = (anyObsOnclick.getAttribute('onclick')||'').match(/data=([\d-]+)/);
@@ -56,8 +54,22 @@
     const withDate = matches.find(a => /[?&]data=/.test(a.getAttribute('onclick') || ''));
     return withDate || matches[0] || null;
   }
+  function extractObsText(doc){
+    const marker = Array.from(doc.querySelectorAll('h3')).find(h=>h.textContent.trim().toLowerCase()==='observacions');
+    if(!marker) return '';
+    let node = marker.nextElementSibling;
+    let text = '';
+    while(node){
+      const cls = node.className || '';
+      if(!/titol_gris/i.test(cls)){
+        const t = (node.textContent||'').trim();
+        if(t && !/no hi ha observacions/i.test(t)) text += (text?'\n':'') + t;
+      }
+      node = node.nextElementSibling;
+    }
+    return text.trim();
+  }
 
-  // 1) Leer asistencia/actitud/material: es directo, está ya en la página.
   const results = directory.map(d=>{
     const codes = [];
     ['F','R','m','C'].forEach(letter=>{
@@ -67,101 +79,105 @@
     return { id_per: d.id_per, name: d.name, codes, obsText: null, obsStatus: 'pendiente' };
   });
 
-  // 2) Leer observaciones: hay que abrir una ventana por alumno. Se abren TODAS
-  // ahora mismo, dentro de este mismo clic (para que el navegador no las bloquee),
-  // y luego se leen y cierran una a una según van cargando.
-  const toRead = [];
-  results.forEach(r=>{
-    const link = findObsLink(r.id_per);
-    const m = link && link.getAttribute('onclick').match(/wopen\('([^']+)'/);
-    if(m){
-      const win = window.open(m[1], 'mihorario_leer_'+r.id_per, 'width=480,height=400');
-      if(win) toRead.push({ r, win });
-      else r.obsStatus = 'bloqueada';
-    } else {
-      r.obsStatus = 'sin-enlace';
-    }
-  });
-
-  function extractObsText(doc){
-    // La ventana muestra "No hi ha observacions" cuando no hay ninguna; si hay,
-    // se listan debajo del título "Observacions". Cogemos ese bloque y quitamos
-    // el aviso de "no hay" si aparece.
-    const marker = Array.from(doc.querySelectorAll('h3')).find(h=>/observacions/i.test(h.textContent));
-    if(!marker) return '';
-    let node = marker.nextElementSibling;
-    let text = '';
-    while(node){
-      const t = (node.textContent||'').trim();
-      if(t && !/no hi ha observacions/i.test(t)) text += (text?'\n':'') + t;
-      node = node.nextElementSibling;
-    }
-    return text.trim();
-  }
-
-  async function readAndClose(item){
-    return new Promise((resolve)=>{
-      const start = Date.now();
-      const tryRead = ()=>{
-        let doc;
-        try{ doc = item.win.document; }catch(e){ doc = null; }
-        if(doc && doc.readyState === 'complete' && doc.body && doc.body.innerHTML.length > 50){
-          item.r.obsText = extractObsText(doc) || null;
-          item.r.obsStatus = 'ok';
-          try{ item.win.close(); }catch(e){}
-          resolve();
-        } else if(Date.now() - start > 8000){
-          item.r.obsStatus = 'tiempo-agotado';
-          resolve();
-        } else {
-          setTimeout(tryRead, 200);
-        }
-      };
-      tryRead();
-    });
-  }
-
-  for(const item of toRead){
-    await readAndClose(item);
-  }
-
-  // ---- Resumen y copia al portapapeles ----
-  const payload = { app:'MiHorario', mode:'import', date: fecha, subject: asignatura, students: [] };
-  results.forEach(r=>{
-    if(r.codes.length || r.obsText) payload.students.push({ name:r.name, codes:r.codes, obsText:r.obsText||undefined });
-  });
-
+  // ---- Ventana de progreso ----
   const overlay = document.createElement('div');
   overlay.id = 'mihorario-ieduca-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:999999;display:flex;align-items:center;justify-content:center;font-family:sans-serif;';
   const box = document.createElement('div');
   box.style.cssText = 'background:#fff;border-radius:10px;max-width:560px;width:92%;max-height:82vh;overflow:auto;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.3);';
-  const rowsHtml = results.map(r=>{
-    const codesTxt = r.codes.length ? r.codes.join(', ') : '(nada marcado)';
-    const obsTxt = r.obsText ? `📝 "${escapeHtml(r.obsText.length>100?r.obsText.slice(0,100)+'…':r.obsText)}"` :
-      (r.obsStatus==='ok' ? '' : `<span style="color:#c0392b;">obs: ${escapeHtml(r.obsStatus)}</span>`);
-    return `<div style="padding:7px 0;border-bottom:1px solid #eee;font-size:13px;">
-      <b>${escapeHtml(r.name)}</b> — ${escapeHtml(codesTxt)}${obsTxt?'<br>'+obsTxt:''}
-    </div>`;
-  }).join('');
   box.innerHTML = `
-    <h2 style="margin:0 0 4px;font-size:18px;">Leído de iEduca ${fecha?'— '+escapeHtml(fecha):''}</h2>
-    <p style="font-size:13px;color:#555;margin:0 0 14px;">Revisa el resultado. Al pulsar "Copiar", podrás pegarlo en Mi Horario con "Pegar desde iEduca".</p>
-    <div>${rowsHtml}</div>
+    <h2 style="margin:0 0 4px;font-size:18px;">Leyendo de iEduca ${fecha?'— '+escapeHtml(fecha):''}</h2>
+    <p id="mihorario-ieduca-progress" style="font-size:13px;color:#555;margin:0 0 14px;">Leyendo asistencia...</p>
+    <div id="mihorario-ieduca-list"></div>
     <div style="margin-top:16px;display:flex;gap:10px;">
-      <button id="mihorario-ieduca-copy" style="flex:1;padding:11px;border:none;border-radius:8px;background:#2a6f4b;color:#fff;font-weight:700;cursor:pointer;">Copiar</button>
+      <button id="mihorario-ieduca-copy" style="flex:1;padding:11px;border:none;border-radius:8px;background:#2a6f4b;color:#fff;font-weight:700;cursor:pointer;" disabled>Copiar</button>
       <button id="mihorario-ieduca-cancel" style="padding:11px 16px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer;">Cerrar</button>
     </div>
     <div id="mihorario-ieduca-result" style="margin-top:14px;font-size:13px;"></div>
   `;
   overlay.appendChild(box);
   document.body.appendChild(overlay);
+  const listEl = document.getElementById('mihorario-ieduca-list');
+  const progressEl = document.getElementById('mihorario-ieduca-progress');
+  const copyBtn = document.getElementById('mihorario-ieduca-copy');
+
+  function renderList(){
+    listEl.innerHTML = results.map(r=>{
+      const codesTxt = r.codes.length ? r.codes.join(', ') : '(nada marcado)';
+      let obsLine;
+      if(r.obsText) obsLine = `📝 "${escapeHtml(r.obsText.length>100?r.obsText.slice(0,100)+'…':r.obsText)}"`;
+      else if(r.obsStatus==='ok') obsLine = '<span style="color:#888;">sin observaciones</span>';
+      else if(r.obsStatus==='pendiente') obsLine = '<span style="color:#aaa;">leyendo…</span>';
+      else obsLine = `<span style="color:#c0392b;">obs: ${escapeHtml(r.obsStatus)}</span>`;
+      return `<div style="padding:6px 0;border-bottom:1px solid #eee;font-size:12.5px;">
+        <b>${escapeHtml(r.name)}</b> — ${escapeHtml(codesTxt)}<br>${obsLine}
+      </div>`;
+    }).join('');
+  }
+  renderList();
+
   document.getElementById('mihorario-ieduca-cancel').onclick = closeOverlay;
   overlay.addEventListener('click', (e)=>{ if(e.target===overlay) closeOverlay(); });
-  document.getElementById('mihorario-ieduca-copy').onclick = async ()=>{
+
+  // Abrimos UNA ventana, con el MISMO nombre fijo que usa la propia iEduca ('obs'),
+  // y para cada alumno la reutilizamos cambiándole la dirección (en vez de abrir una
+  // ventana nueva cada vez) -- así el navegador no la trata como "ventanas
+  // emergentes no pedidas" y no la bloquea.
+  const first = results.find(r=>findObsLink(r.id_per));
+  let sharedWin = null;
+  if(first){
+    const link = findObsLink(first.id_per);
+    const m0 = link.getAttribute('onclick').match(/wopen\('([^']+)'/);
+    sharedWin = window.open(m0[1], 'obs', 'width=480,height=420');
+  }
+
+  function waitLoaded(win){
+    return new Promise((resolve)=>{
+      const start = Date.now();
+      const tryCheck = ()=>{
+        let doc;
+        try{ doc = win.document; }catch(e){ doc = null; }
+        if(doc && doc.readyState === 'complete' && doc.body && doc.body.innerHTML.length > 50){
+          resolve(doc);
+        } else if(Date.now() - start > 8000){
+          resolve(null);
+        } else {
+          setTimeout(tryCheck, 150);
+        }
+      };
+      tryCheck();
+    });
+  }
+
+  if(!sharedWin){
+    results.forEach(r=>{ r.obsStatus = 'bloqueada'; });
+  } else {
+    for(let i=0; i<results.length; i++){
+      const r = results[i];
+      progressEl.textContent = `Leyendo observaciones... (${i+1}/${results.length}) ${r.name}`;
+      const link = findObsLink(r.id_per);
+      const m = link && link.getAttribute('onclick').match(/wopen\('([^']+)'/);
+      if(!m){ r.obsStatus = 'sin enlace'; renderList(); continue; }
+      if(i>0) sharedWin.location.href = m[1]; // reutilizar la misma ventana, solo cambiar la URL
+      const doc = await waitLoaded(sharedWin);
+      if(doc){ r.obsText = extractObsText(doc) || null; r.obsStatus = 'ok'; }
+      else r.obsStatus = 'tiempo agotado';
+      renderList();
+    }
+    try{ sharedWin.close(); }catch(e){}
+  }
+
+  progressEl.textContent = 'Lectura completa.';
+  copyBtn.disabled = false;
+
+  copyBtn.onclick = async ()=>{
+    const payload = { app:'MiHorario', mode:'import', date: fecha, students: [] };
+    results.forEach(r=>{
+      if(r.codes.length || r.obsText) payload.students.push({ name:r.name, codes:r.codes, obsText:r.obsText||undefined });
+    });
     try{
       await navigator.clipboard.writeText(JSON.stringify(payload));
-      document.getElementById('mihorario-ieduca-result').textContent = 'Copiado. Ve a Mi Horario y pulsa "Pegar desde iEduca".';
+      document.getElementById('mihorario-ieduca-result').textContent = `Copiado (${payload.students.length} alumno(s) con algo que traer). Ve a Mi Horario y pulsa "Pegar desde iEduca".`;
     }catch(e){
       document.getElementById('mihorario-ieduca-result').textContent = 'No se pudo copiar automáticamente.';
     }

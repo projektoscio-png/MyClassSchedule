@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-56';
+const APP_VERSION = '2026-08-22-57';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1241,6 +1241,7 @@ async function pasteDayFromIeduca(subjectId, dateIso){
   openModal(`
     <div class="modal-head"><div class="modal-title">Pegar desde iEduca</div>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+    <p style="font-size:13px;color:var(--ink-soft);margin-bottom:6px;">Buscando coincidencias entre los <b>${students.length}</b> alumnos de <b>${escapeHtml(subj?subj.name:'?')}</b>. Si esperabas otra clase, cierra y vuelve a elegirla arriba.</p>
     <p style="font-size:13px;color:var(--ink-soft);margin-bottom:12px;">Revisa antes de aplicar. Lo que salga en rojo o con conflicto no se tocará.</p>
     <div style="max-height:50vh;overflow-y:auto;">${rows}</div>
     <button class="btn btn-primary" id="ieducaPasteApply" style="margin-top:10px;">Aplicar</button>
