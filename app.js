@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-58';
+const APP_VERSION = '2026-08-22-59';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -52,7 +52,7 @@ const ICONS = {
 
 /* ---------- state ---------- */
 let state = loadState();
-let ui = { tab:'calendar', viewMode:'week', day: mondayIndex(new Date()), weekAnchor: todayISO(), subjectFilter:null };
+let ui = { tab:'calendar', viewMode:'week', day: mondayIndex(new Date()), weekAnchor: todayISO(), subjectFilter:null, ieducaBmOpen:false };
 
 function defaultState(){
   return { subjects:[], classes:[], items:[], holidays:[], students:[], records:[], settings:{ notified:[], weekMode:'full', lastModified:0, notificationsEnabled:true } };
@@ -1691,27 +1691,26 @@ function renderHolidays(){
     </div>
   </div>
   <div class="card">
-    <div class="settings-item" style="align-items:flex-start;">
+    <div class="settings-item" id="ieducaBmHeader" style="cursor:pointer;">
       <div class="settings-icon">${ICONS.clipboard}</div>
       <div class="settings-text">
         <div class="settings-title">Marcadores para iEduca</div>
-        <div class="settings-desc">Copia el código y guárdalo como marcador en tu navegador (nombre libre, pega esto como URL).</div>
-        <div style="margin-top:12px;">
-          <div style="font-size:12.5px;font-weight:700;color:var(--ink-soft);margin-bottom:4px;">Volcar a iEduca (escribir)</div>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <code id="bmVolcarCode" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--bg);padding:8px 10px;border-radius:8px;font-size:11px;">${escapeHtml(IEDUCA_BOOKMARKLETS.volcar)}</code>
-            <button class="settings-action" id="btnCopyBmVolcar">Copiar</button>
-          </div>
-        </div>
-        <div style="margin-top:12px;">
-          <div style="font-size:12.5px;font-weight:700;color:var(--ink-soft);margin-bottom:4px;">Leer de iEduca</div>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <code id="bmLeerCode" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--bg);padding:8px 10px;border-radius:8px;font-size:11px;">${escapeHtml(IEDUCA_BOOKMARKLETS.leer)}</code>
-            <button class="settings-action" id="btnCopyBmLeer">Copiar</button>
-          </div>
-        </div>
+        <div class="settings-desc">Toca para ${ui.ieducaBmOpen?'plegar':'ver los códigos y copiarlos'}</div>
       </div>
+      <span style="color:var(--ink-faint);transform:rotate(${ui.ieducaBmOpen?'90deg':'0deg'});transition:transform .15s;">${ICONS.chevR}</span>
     </div>
+    ${ui.ieducaBmOpen ? `
+    <div style="padding:0 16px 16px 52px;">
+      <div style="font-size:11.5px;color:var(--ink-faint);margin-bottom:12px;">Toca un código para copiarlo, y pégalo como URL al crear un marcador nuevo en tu navegador (nombre libre).</div>
+      <div style="margin-bottom:12px;">
+        <div style="font-size:12.5px;font-weight:700;color:var(--ink-soft);margin-bottom:4px;">Volcar a iEduca (escribir)</div>
+        <code class="ieduca-bm-code" data-bm="volcar" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--bg);padding:10px 12px;border-radius:8px;font-size:11px;cursor:pointer;">${escapeHtml(IEDUCA_BOOKMARKLETS.volcar)}</code>
+      </div>
+      <div>
+        <div style="font-size:12.5px;font-weight:700;color:var(--ink-soft);margin-bottom:4px;">Leer de iEduca</div>
+        <code class="ieduca-bm-code" data-bm="leer" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--bg);padding:10px 12px;border-radius:8px;font-size:11px;cursor:pointer;">${escapeHtml(IEDUCA_BOOKMARKLETS.leer)}</code>
+      </div>
+    </div>` : ''}
   </div>
   <div class="card">
     <div class="settings-item">
@@ -1806,14 +1805,15 @@ function bindContentEvents(){
   if(fileImport) fileImport.onchange = importData;
   const btnExportAllRecords = document.getElementById('btnExportAllRecords');
   if(btnExportAllRecords) btnExportAllRecords.onclick = ()=>openExportRangeModal(null);
-  const btnCopyBmVolcar = document.getElementById('btnCopyBmVolcar');
-  if(btnCopyBmVolcar) btnCopyBmVolcar.onclick = ()=>{
-    navigator.clipboard.writeText(IEDUCA_BOOKMARKLETS.volcar).then(()=>toast('Copiado. Pégalo como URL al crear el marcador.')).catch(()=>toast('No se pudo copiar'));
-  };
-  const btnCopyBmLeer = document.getElementById('btnCopyBmLeer');
-  if(btnCopyBmLeer) btnCopyBmLeer.onclick = ()=>{
-    navigator.clipboard.writeText(IEDUCA_BOOKMARKLETS.leer).then(()=>toast('Copiado. Pégalo como URL al crear el marcador.')).catch(()=>toast('No se pudo copiar'));
-  };
+  const ieducaBmHeader = document.getElementById('ieducaBmHeader');
+  if(ieducaBmHeader) ieducaBmHeader.onclick = ()=>{ ui.ieducaBmOpen = !ui.ieducaBmOpen; render(); };
+  document.querySelectorAll('.ieduca-bm-code').forEach(el=>{
+    el.onclick=(e)=>{
+      e.stopPropagation();
+      const text = IEDUCA_BOOKMARKLETS[el.dataset.bm];
+      navigator.clipboard.writeText(text).then(()=>toast('Copiado. Pégalo como URL al crear el marcador.')).catch(()=>toast('No se pudo copiar'));
+    };
+  });
   const btnReset = document.getElementById('btnReset');
   if(btnReset) btnReset.onclick = confirmReset;
   const weekModeSeg = document.getElementById('weekModeSeg');
