@@ -131,16 +131,20 @@
     sharedWin = window.open(m0[1], 'obs', 'width=480,height=420');
   }
 
-  function waitLoaded(win){
+  function waitLoaded(win, prevDoc){
     return new Promise((resolve)=>{
       const start = Date.now();
       const tryCheck = ()=>{
         let doc;
         try{ doc = win.document; }catch(e){ doc = null; }
-        if(doc && doc.readyState === 'complete' && doc.body && doc.body.innerHTML.length > 50){
+        // Ojo: al cambiar location.href para reutilizar la ventana, la página ANTERIOR
+        // sigue ahí un instante hasta que arranca la nueva. Si no comprobamos que es un
+        // documento DISTINTO al de antes, podríamos leer por error el contenido del
+        // alumno anterior en vez de esperar a que cargue el nuevo.
+        if(doc && doc !== prevDoc && doc.readyState === 'complete' && doc.body && doc.body.innerHTML.length > 50){
           resolve(doc);
         } else if(Date.now() - start > 8000){
-          resolve(null);
+          resolve(doc && doc !== prevDoc ? doc : null);
         } else {
           setTimeout(tryCheck, 150);
         }
@@ -152,15 +156,16 @@
   if(!sharedWin){
     results.forEach(r=>{ r.obsStatus = 'bloqueada'; });
   } else {
+    let lastDoc = null;
     for(let i=0; i<results.length; i++){
       const r = results[i];
       progressEl.textContent = `Leyendo observaciones... (${i+1}/${results.length}) ${r.name}`;
       const link = findObsLink(r.id_per);
       const m = link && link.getAttribute('onclick').match(/wopen\('([^']+)'/);
       if(!m){ r.obsStatus = 'sin enlace'; renderList(); continue; }
-      if(i>0) sharedWin.location.href = m[1]; // reutilizar la misma ventana, solo cambiar la URL
-      const doc = await waitLoaded(sharedWin);
-      if(doc){ r.obsText = extractObsText(doc) || null; r.obsStatus = 'ok'; }
+      if(i>0){ try{ lastDoc = sharedWin.document; }catch(e){ lastDoc = null; } sharedWin.location.href = m[1]; }
+      const doc = await waitLoaded(sharedWin, lastDoc);
+      if(doc){ r.obsText = extractObsText(doc) || null; r.obsStatus = 'ok'; lastDoc = doc; }
       else r.obsStatus = 'tiempo agotado';
       renderList();
     }

@@ -155,13 +155,15 @@
     // usa la propia iEduca ('obs'), y se reutiliza cambiándole la dirección para cada
     // alumno -- si se abriera una ventana nueva y distinta por cada uno, el navegador
     // las trataría como "ventanas emergentes no pedidas" y bloquearía casi todas.
-    function waitLoaded(win){
+    function waitLoaded(win, prevDoc){
       return new Promise((resolve)=>{
         const start = Date.now();
         const tryCheck = ()=>{
           let doc;
           try{ doc = win.document; }catch(e){ doc = null; }
-          if(doc && doc.getElementById && doc.getElementById('text')) resolve(doc);
+          // Igual que al leer: hay que asegurarse de que es un documento NUEVO (no el
+          // de la página anterior, que puede seguir un instante ahí tras cambiar la URL).
+          if(doc && doc !== prevDoc && doc.getElementById && doc.getElementById('text')) resolve(doc);
           else if(Date.now() - start > 8000) resolve(null);
           else setTimeout(tryCheck, 150);
         };
@@ -183,15 +185,17 @@
         if(!sharedWin){
           obsQueue.forEach(m=>failLines.push(`${m.miName}: el navegador bloqueó la ventana de observación (permite popups para este sitio e inténtalo de nuevo)`));
         } else {
+          let lastDoc = null;
           for(let i=0; i<obsQueue.length; i++){
             const m = obsQueue[i];
             const link = findObsLink(m.matched.id_per);
             const url = link && link.getAttribute('onclick').match(/wopen\('([^']+)'/);
             if(!url){ failLines.push(`${m.miName}: no se encontró el enlace de observaciones en la página`); continue; }
-            if(i>0) sharedWin.location.href = url[1];
-            const doc = await waitLoaded(sharedWin);
+            if(i>0){ try{ lastDoc = sharedWin.document; }catch(e){ lastDoc = null; } sharedWin.location.href = url[1]; }
+            const doc = await waitLoaded(sharedWin, lastDoc);
             if(doc){
               fillAndSubmit(doc, m.obsText);
+              lastDoc = doc;
               await new Promise(r=>setTimeout(r, 700));
               ok++;
             } else {
