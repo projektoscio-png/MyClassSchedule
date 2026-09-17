@@ -55,19 +55,13 @@
     return withDate || matches[0] || null;
   }
   function extractObsText(doc){
-    const marker = Array.from(doc.querySelectorAll('h3')).find(h=>h.textContent.trim().toLowerCase()==='observacions');
-    if(!marker) return '';
-    let node = marker.nextElementSibling;
-    let text = '';
-    while(node){
-      const cls = node.className || '';
-      if(!/titol_gris/i.test(cls)){
-        const t = (node.textContent||'').trim();
-        if(t && !/no hi ha observacions/i.test(t)) text += (text?'\n':'') + t;
-      }
-      node = node.nextElementSibling;
-    }
-    return text.trim();
+    // El texto real de cada observación está en ".observacio-bloc-text"; la cabecera
+    // con nombre/fecha/hora/materia va aparte, en ".observacio-bloc-info", y no la
+    // queremos. Si un alumno tiene varias observaciones guardadas para este mismo
+    // día/hora, se juntan todas (una por línea).
+    const blocks = doc.querySelectorAll('.observacio-bloc-text');
+    if(blocks.length === 0) return '';
+    return Array.from(blocks).map(b=>(b.textContent||'').trim()).filter(Boolean).join('\n');
   }
 
   const results = directory.map(d=>{
