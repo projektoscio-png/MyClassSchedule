@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-53';
+const APP_VERSION = '2026-08-22-54';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -536,8 +536,9 @@ function openSubjectDetailModal(subjectId){
     <div style="height:1px;background:var(--line);margin:16px 0;"></div>
     <div class="field">
       <label>Alumnos (${students.length})</label>
-      ${students.length ? `<div class="student-list">${students.map(s=>`
+      ${students.length ? `<div class="student-list">${students.map((s,idx)=>`
         <div class="student-list-row" data-open-student="${s.id}">
+          <span class="student-list-num">${idx+1}</span>
           <div class="student-avatar" data-photo-for="${s.id}" data-edit-photo="${s.id}" title="Toca para añadir/cambiar foto">${escapeHtml((s.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
           <span class="student-list-name">${escapeHtml(s.name)}</span>
           <button data-edit-student="${s.id}" aria-label="Editar nombre" class="student-list-del" style="color:var(--ink-soft);">${ICONS.pencil}</button>
