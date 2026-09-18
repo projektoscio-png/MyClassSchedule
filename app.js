@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-64';
+const APP_VERSION = '2026-08-22-65';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1145,11 +1145,12 @@ function setTurnScore(round, turnId, score){
    dejen de aparecer en la lista de pendientes. */
 function markExercisesUsed(subjectId, classId, entries){
   // entries: [{date, key}, ...] -- pueden venir de días de deberes distintos a la vez.
+  // Se busca por asignatura (no por tramo horario), por el mismo motivo que al leerlos.
   if(!entries || entries.length===0) return;
   const byDate = {};
   entries.forEach(e=>{ (byDate[e.date] = byDate[e.date]||[]).push(e.key); });
   Object.keys(byDate).forEach(date=>{
-    const item = state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===subjectId && i.classId===classId && i.date===date);
+    const item = state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===subjectId && i.date===date);
     if(!item) return;
     const set = new Set(item.usedExerciseKeys||[]);
     byDate[date].forEach(k=>set.add(k));
@@ -1158,7 +1159,7 @@ function markExercisesUsed(subjectId, classId, entries){
   saveState();
 }
 function unmarkExerciseUsed(subjectId, classId, deberesDate, key){
-  const item = state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===subjectId && i.classId===classId && i.date===deberesDate);
+  const item = state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===subjectId && i.date===deberesDate);
   if(!item || !item.usedExerciseKeys) return;
   item.usedExerciseKeys = item.usedExerciseKeys.filter(k=>k!==key);
   saveState();
@@ -1286,7 +1287,10 @@ function renderBoardTab(){
           // Se juntan los ejercicios pendientes de TODOS los días de deberes hasta el
           // día actual de la ronda (los deberes se van acumulando: puede que hoy se
           // estén corrigiendo restos de un día anterior junto a los de hoy mismo).
-          const deberesItems = state.items.filter(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===ui.boardSubjectId && i.classId===ui.boardClassId && i.date<=ui.boardDay).sort((a,b)=>a.date.localeCompare(b.date));
+          // Buscamos por ASIGNATURA (no por tramo horario concreto): si esta clase se
+          // da varios días a la semana, el deberes puesto en un tramo tiene que
+          // seguir apareciendo aunque hoy se esté usando otro tramo distinto.
+          const deberesItems = state.items.filter(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===ui.boardSubjectId && i.date<=ui.boardDay).sort((a,b)=>a.date.localeCompare(b.date));
           if(deberesItems.length===0) return '';
           let anyFormatted = false;
           const pendingHtml = deberesItems.map(item=>{
