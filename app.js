@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-66';
+const APP_VERSION = '2026-08-22-67';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -3037,6 +3037,38 @@ function requestNotifPermission(){
     if(ui.tab==='settings') render();
   });
 }
+/* Si a un alumno no se le ha puesto ninguna nota de Gestión en una clase concreta, y
+   ya han pasado 2 días o más desde ese día, se le pone un 2 por defecto (se entiende
+   que, si no se ha anotado nada malo, la gestión ha sido correcta). No se toca nada
+   que ya tenga puesta una nota explícita, y solo se mira hasta 30 días atrás como
+   máximo, para no revisar todo el histórico cada vez. */
+function applyDefaultGestion(){
+  const today = todayISO();
+  const windowStart = addDaysISO(today, -30);
+  let changed = 0;
+  state.classes.forEach(cls=>{
+    const students = state.students.filter(s=>s.subjectId===cls.subjectId);
+    if(students.length===0) return;
+    for(let d=windowStart; d<today; d=addDaysISO(d,1)){
+      if(daysBetween(d, today) < 2) continue;
+      const dow = mondayIndex(parseISO(d));
+      if(!cls.days.includes(dow)) continue;
+      if(!classActiveOnDate(cls, d)) continue;
+      if(holidayForDate(d)) continue;
+      students.forEach(s=>{
+        const rec = state.records.find(r=>r.studentId===s.id && r.date===d);
+        if(!rec || rec.gestio==null){
+          const r2 = getOrCreateRecord(s.id, d);
+          r2.gestio = 2;
+          persistRecord(r2);
+          changed++;
+        }
+      });
+    }
+  });
+  return changed;
+}
+
 function checkReminders(){
   if(!('Notification' in window) || Notification.permission!=='granted') return;
   if(state.settings.notificationsEnabled === false) return;
@@ -3609,6 +3641,10 @@ setInterval(checkReminders, 60000);
 setTimeout(driveCheckOnLoad, 1200);
 setTimeout(drivePhotosDownloadIfNewer, 1800);
 setTimeout(autoSyncDeberesOnLoad, 2400);
+setTimeout(()=>{
+  const n = applyDefaultGestion();
+  if(n>0){ render(); toast(`Gestión puesta a 2 por defecto en ${n} caso(s) sin nota tras 2 días`); }
+}, 800);
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
