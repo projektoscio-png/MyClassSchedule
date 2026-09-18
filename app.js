@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-63';
+const APP_VERSION = '2026-08-22-64';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1143,13 +1143,18 @@ function setTurnScore(round, turnId, score){
 /* Marca ejercicios de un día de deberes concreto como "ya hechos" (asignados a un
    alumno o resueltos por el profesor en la pizarra sin asignar a nadie), para que
    dejen de aparecer en la lista de pendientes. */
-function markExercisesUsed(subjectId, classId, deberesDate, keys){
-  if(!keys || keys.length===0) return;
-  const item = state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===subjectId && i.classId===classId && i.date===deberesDate);
-  if(!item) return;
-  const set = new Set(item.usedExerciseKeys||[]);
-  keys.forEach(k=>set.add(k));
-  item.usedExerciseKeys = [...set];
+function markExercisesUsed(subjectId, classId, entries){
+  // entries: [{date, key}, ...] -- pueden venir de días de deberes distintos a la vez.
+  if(!entries || entries.length===0) return;
+  const byDate = {};
+  entries.forEach(e=>{ (byDate[e.date] = byDate[e.date]||[]).push(e.key); });
+  Object.keys(byDate).forEach(date=>{
+    const item = state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===subjectId && i.classId===classId && i.date===date);
+    if(!item) return;
+    const set = new Set(item.usedExerciseKeys||[]);
+    byDate[date].forEach(k=>set.add(k));
+    item.usedExerciseKeys = [...set];
+  });
   saveState();
 }
 function unmarkExerciseUsed(subjectId, classId, deberesDate, key){
@@ -1278,27 +1283,33 @@ function renderBoardTab(){
           <select id="boardTurnStudent">${remaining.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}</select>
         </div>
         ${(()=>{
-          const deberesItems = state.items.filter(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===ui.boardSubjectId && i.classId===ui.boardClassId).sort((a,b)=>b.date.localeCompare(a.date));
+          // Se juntan los ejercicios pendientes de TODOS los días de deberes hasta el
+          // día actual de la ronda (los deberes se van acumulando: puede que hoy se
+          // estén corrigiendo restos de un día anterior junto a los de hoy mismo).
+          const deberesItems = state.items.filter(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===ui.boardSubjectId && i.classId===ui.boardClassId && i.date<=ui.boardDay).sort((a,b)=>a.date.localeCompare(b.date));
           if(deberesItems.length===0) return '';
-          if(!ui.boardDeberesDate || !deberesItems.some(d=>d.date===ui.boardDeberesDate)) ui.boardDeberesDate = deberesItems[0].date;
-          const chosen = deberesItems.find(d=>d.date===ui.boardDeberesDate);
-          const allExercises = parseDeberesExercises(chosen.notes||chosen.title);
-          const usedKeys = new Set(chosen.usedExerciseKeys||[]);
-          const exercises = allExercises.filter(e=>!usedKeys.has(e.key));
-          const doneExercises = allExercises.filter(e=>usedKeys.has(e.key));
+          let anyFormatted = false;
+          const pendingHtml = deberesItems.map(item=>{
+            const allExercises = parseDeberesExercises(item.notes||item.title);
+            if(allExercises.length===0) return '';
+            anyFormatted = true;
+            const usedKeys = new Set(item.usedExerciseKeys||[]);
+            const exercises = allExercises.filter(e=>!usedKeys.has(e.key));
+            const doneExercises = allExercises.filter(e=>usedKeys.has(e.key));
+            return `
+            <div style="margin-bottom:8px;">
+              <div style="font-size:10.5px;font-weight:700;color:var(--ink-faint);margin-bottom:4px;">${dateLabel(item.date)}</div>
+              ${exercises.length ? `<div class="dr-chips board-exercise-chips">${exercises.map(e=>`<button type="button" data-ex="${escapeHtml(e.label)}" data-exkey="${escapeHtml(e.key)}" data-exdate="${item.date}">${escapeHtml(e.label)}</button>`).join('')}</div>` : `<div style="font-size:11px;color:var(--ink-faint);">Ya no quedan ejercicios pendientes de este día.</div>`}
+              ${doneExercises.length ? `<div style="font-size:10px;color:var(--ink-faint);margin-top:4px;">Ya hechos (sin alumno): ${doneExercises.map(e=>`<span data-undo-done="${escapeHtml(e.key)}" data-undo-date="${item.date}" style="text-decoration:underline;cursor:pointer;">${escapeHtml(e.label)}</span>`).join(', ')}</div>` : ''}
+            </div>`;
+          }).join('');
+          if(!anyFormatted) return `<div style="font-size:11.5px;color:var(--ink-faint);margin-bottom:8px;">Los deberes de esta clase no siguen el formato de página/ejercicio, escríbelos abajo a mano.</div>`;
           return `
-          <div class="field" style="margin-bottom:8px;">
-            <label style="font-size:11px;">Deberes del día</label>
-            <select id="boardDeberesDateSelect">${deberesItems.map(d=>`<option value="${d.date}" ${d.date===ui.boardDeberesDate?'selected':''}>${dateLabel(d.date)}</option>`).join('')}</select>
-          </div>
-          ${exercises.length ? `
           <div class="field" style="margin-bottom:4px;">
             <label style="font-size:11px;">Ejercicios pendientes (toca los que le toquen)</label>
-            <div class="dr-chips" id="boardExerciseChips">${exercises.map(e=>`<button type="button" data-ex="${escapeHtml(e.label)}" data-exkey="${escapeHtml(e.key)}">${escapeHtml(e.label)}</button>`).join('')}</div>
+            ${pendingHtml}
           </div>
           <button type="button" class="settings-action" id="boardMarkDoneByTeacher" style="font-size:11.5px;margin-bottom:8px;">Marcar los tocados como hechos por el profesor (sin asignar a nadie)</button>
-          ` : allExercises.length ? `<div style="font-size:11.5px;color:var(--ink-faint);margin-bottom:8px;">Ya no quedan ejercicios pendientes de ese día.</div>` : `<div style="font-size:11.5px;color:var(--ink-faint);margin-bottom:8px;">Ese texto de deberes no sigue el formato de página/ejercicio, escríbelo abajo a mano.</div>`}
-          ${doneExercises.length ? `<div style="font-size:10.5px;color:var(--ink-faint);margin-bottom:8px;">Ya hechos (sin alumno): ${doneExercises.map(e=>`<span data-undo-done="${escapeHtml(e.key)}" style="text-decoration:underline;cursor:pointer;">${escapeHtml(e.label)}</span>`).join(', ')}</div>` : ''}
           `;
         })()}
         <textarea id="boardTurnExercises" placeholder="Puedes escribir aquí a mano ejercicios que no salgan arriba (o todos, si no siguen ese formato)" style="min-height:50px;margin-bottom:8px;"></textarea>
@@ -2026,17 +2037,15 @@ function bindContentEvents(){
     startNewRound(ui.boardSubjectId, ui.boardClassId, d);
     render();
   };
-  const boardDeberesDateSelect = document.getElementById('boardDeberesDateSelect');
-  if(boardDeberesDateSelect) boardDeberesDateSelect.onchange=(e)=>{ ui.boardDeberesDate = e.target.value; render(); };
-  document.querySelectorAll('#boardExerciseChips button').forEach(el=>{
+  document.querySelectorAll('.board-exercise-chips button').forEach(el=>{
     el.onclick=()=>{ el.classList.toggle('active'); };
   });
   const boardAddTurn = document.getElementById('boardAddTurn');
   if(boardAddTurn) boardAddTurn.onclick=()=>{
     const studentId = document.getElementById('boardTurnStudent').value;
-    const selectedEls = [...document.querySelectorAll('#boardExerciseChips button.active')];
+    const selectedEls = [...document.querySelectorAll('.board-exercise-chips button.active')];
     const selectedChips = selectedEls.map(b=>b.dataset.ex);
-    const selectedKeys = selectedEls.map(b=>b.dataset.exkey);
+    const selectedEntries = selectedEls.map(b=>({ date:b.dataset.exdate, key:b.dataset.exkey }));
     const manual = document.getElementById('boardTurnExercises').value.trim();
     const parts = [...selectedChips];
     if(manual) parts.push(manual);
@@ -2044,20 +2053,20 @@ function bindContentEvents(){
     if(!exercises){ toast('Elige algún ejercicio o escríbelo a mano'); return; }
     const round = getOpenRound(ui.boardSubjectId, ui.boardClassId);
     if(round) addTurn(round, studentId, exercises);
-    markExercisesUsed(ui.boardSubjectId, ui.boardClassId, ui.boardDeberesDate, selectedKeys);
+    markExercisesUsed(ui.boardSubjectId, ui.boardClassId, selectedEntries);
     render();
   };
   const boardMarkDoneByTeacher = document.getElementById('boardMarkDoneByTeacher');
   if(boardMarkDoneByTeacher) boardMarkDoneByTeacher.onclick=()=>{
-    const selectedKeys = [...document.querySelectorAll('#boardExerciseChips button.active')].map(b=>b.dataset.exkey);
-    if(selectedKeys.length===0){ toast('Toca primero los ejercicios que has hecho tú en la pizarra'); return; }
-    markExercisesUsed(ui.boardSubjectId, ui.boardClassId, ui.boardDeberesDate, selectedKeys);
+    const selectedEntries = [...document.querySelectorAll('.board-exercise-chips button.active')].map(b=>({ date:b.dataset.exdate, key:b.dataset.exkey }));
+    if(selectedEntries.length===0){ toast('Toca primero los ejercicios que has hecho tú en la pizarra'); return; }
+    markExercisesUsed(ui.boardSubjectId, ui.boardClassId, selectedEntries);
     toast('Marcados como hechos, ya no saldrán en la lista');
     render();
   };
   document.querySelectorAll('[data-undo-done]').forEach(el=>{
     el.onclick=()=>{
-      unmarkExerciseUsed(ui.boardSubjectId, ui.boardClassId, ui.boardDeberesDate, el.dataset.undoDone);
+      unmarkExerciseUsed(ui.boardSubjectId, ui.boardClassId, el.dataset.undoDate, el.dataset.undoDone);
       render();
     };
   });
