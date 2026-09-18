@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-68';
+const APP_VERSION = '2026-08-22-69';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -3261,7 +3261,7 @@ function scheduleDriveUpload(){
   driveUploadTimer = setTimeout(()=>driveSyncUpload({showToast:false, interactive:false}), 2500);
 }
 
-function driveOfferRemoteUpdate(remoteData){
+function driveOfferRemoteUpdate(remoteData, onApplied){
   if(document.getElementById('driveUpdateBanner')) return;
   const t = document.createElement('div');
   t.id = 'driveUpdateBanner';
@@ -3275,33 +3275,46 @@ function driveOfferRemoteUpdate(remoteData){
   document.getElementById('driveUpdateBtn').onclick = ()=>{
     t.remove();
     confirmImportPreview(remoteData, 'la copia de Google Drive', {fromDrive:true});
+    // Solo ahora, con los datos ya puestos al día, es seguro seguir con sincronizaciones
+    // automáticas (como la de deberes con Calendar) sin riesgo de "envejecer" por error
+    // esta copia y hacer que parezca la más reciente sin serlo de verdad.
+    if(onApplied) onApplied();
   };
   document.getElementById('driveUpdateDismiss').onclick = ()=> t.remove();
 }
 
-/* Comprueba Drive al abrir la app (silencioso: no pide inicio de sesión si no hace falta). */
-async function driveCheckOnLoad(){
-  if(!driveConfigured() || !driveIsConnected()) return;
+/* Comprueba Drive al abrir la app (silencioso: no pide inicio de sesión si no hace falta).
+   Si hay una versión más reciente esperando a que el usuario decida actualizar, NO se
+   avisa a onSafeToSync hasta que lo haga (o descarte el aviso) -- así evitamos que otras
+   sincronizaciones automáticas (como la de deberes con Calendar) se ejecuten sobre una
+   copia local que sabemos que está desactualizada y la hagan parecer la más reciente
+   sin serlo de verdad. */
+async function driveCheckOnLoad(onSafeToSync){
+  if(!driveConfigured() || !driveIsConnected()){ if(onSafeToSync) onSafeToSync(); return; }
   try{
     const token = await driveGetToken(true);
     localStorage.removeItem('driveNeedsReconnect');
     const remote = await driveFindFile(token);
     if(!remote){
+      if(onSafeToSync) onSafeToSync();
       return;
     }
     const remoteData = await driveDownload(token, remote.id);
     const remoteModified = (remoteData.settings && remoteData.settings.lastModified) || 0;
     if(remoteModified > (state.settings.lastModified||0)){
-      driveOfferRemoteUpdate(remoteData);
-    } else if((state.settings.lastModified||0) > remoteModified){
-      await driveUpload(token, remote.id, state);
-      localStorage.setItem('driveLastSync', String(Date.now()));
+      driveOfferRemoteUpdate(remoteData, onSafeToSync);
     } else {
+      if((state.settings.lastModified||0) > remoteModified){
+        await driveUpload(token, remote.id, state);
+        localStorage.setItem('driveLastSync', String(Date.now()));
+      }
+      if(onSafeToSync) onSafeToSync();
     }
   }catch(e){
     // La sesión de Google probablemente ha caducado en este dispositivo: lo marcamos
     // para que se muestre un aviso, pero no interrumpimos con una ventana emergente.
     localStorage.setItem('driveNeedsReconnect','1');
+    if(onSafeToSync) onSafeToSync(); // sin conexión: seguimos con lo único que tenemos, lo local
   }
   if(document.getElementById('content') && (ui.tab==='settings'||ui.tab==='calendar')) render();
 }
@@ -3640,9 +3653,8 @@ initSwipeNav();
 updateNotifBellIcon();
 checkReminders();
 setInterval(checkReminders, 60000);
-setTimeout(driveCheckOnLoad, 1200);
+setTimeout(()=>{ driveCheckOnLoad(autoSyncDeberesOnLoad); }, 1200);
 setTimeout(drivePhotosDownloadIfNewer, 1800);
-setTimeout(autoSyncDeberesOnLoad, 2400);
 setTimeout(()=>{
   const n = applyDefaultGestion();
   if(n>0){ render(); toast(`Gestión puesta a 2 por defecto en ${n} caso(s) sin nota tras 2 días`); }
