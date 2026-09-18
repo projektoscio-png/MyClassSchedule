@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-62';
+const APP_VERSION = '2026-08-22-63';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1200,8 +1200,18 @@ function renderBoardTab(){
   }
   if(!ui.boardSubjectId || !subjects.some(s=>s.id===ui.boardSubjectId)) ui.boardSubjectId = subjects[0].id;
   const subj = getSubject(ui.boardSubjectId);
-  const slots = state.classes.filter(c=>c.subjectId===ui.boardSubjectId);
-  if(!ui.boardClassId || !slots.some(s=>s.id===ui.boardClassId)) ui.boardClassId = slots.length?slots[0].id:null;
+  if(!ui.boardDay) ui.boardDay = todayISO();
+
+  // El tramo horario se deduce del día elegido: si esta asignatura solo tiene una
+  // clase ese día de la semana, se selecciona sola; si tiene varias, hay que elegir.
+  const daySlots = state.classes.filter(c=>c.subjectId===ui.boardSubjectId && c.days.includes(mondayIndex(parseISO(ui.boardDay))) && classActiveOnDate(c, ui.boardDay));
+  if(daySlots.length===1){
+    ui.boardClassId = daySlots[0].id;
+  } else if(daySlots.length>1){
+    if(!ui.boardClassId || !daySlots.some(s=>s.id===ui.boardClassId)) ui.boardClassId = daySlots[0].id;
+  } else {
+    ui.boardClassId = null;
+  }
   const cls = ui.boardClassId ? state.classes.find(c=>c.id===ui.boardClassId) : null;
   const students = state.students.filter(s=>s.subjectId===ui.boardSubjectId).sort((a,b)=>a.name.localeCompare(b.name,'es'));
 
@@ -1209,13 +1219,20 @@ function renderBoardTab(){
     <label>Clase</label>
     <select id="boardSubjectSelect">${subjects.map(s=>`<option value="${s.id}" ${s.id===ui.boardSubjectId?'selected':''}>${escapeHtml(s.name)}</option>`).join('')}</select>
   </div>`;
-  const slotSelect = slots.length ? `<div class="field">
-    <label>Tramo horario</label>
-    <select id="boardSlotSelect">${slots.map(s=>`<option value="${s.id}" ${s.id===ui.boardClassId?'selected':''}>${s.start}–${s.end}${s.room?' · '+escapeHtml(s.room):''}</option>`).join('')}</select>
+  const daySelect = `<div class="field">
+    <label>Día</label>
+    <input type="date" id="boardDaySelect" value="${ui.boardDay}">
+  </div>`;
+  const slotSelect = daySlots.length>1 ? `<div class="field">
+    <label>Tramo horario (esta asignatura tiene varios ese día)</label>
+    <select id="boardSlotSelect">${daySlots.map(s=>`<option value="${s.id}" ${s.id===ui.boardClassId?'selected':''}>${s.start}–${s.end}${s.room?' · '+escapeHtml(s.room):''}</option>`).join('')}</select>
   </div>` : '';
 
-  if(!cls || students.length===0){
-    return `${subjectSelect}${slotSelect}<div class="empty-state"><span class="emoji">📚</span><div class="et">${!cls?'Esta clase todavía no tiene ningún tramo horario':'Esta clase todavía no tiene alumnos'}</div></div>`;
+  if(!cls){
+    return `${subjectSelect}${daySelect}${slotSelect}<div class="empty-state"><span class="emoji">📚</span><div class="et">Esta asignatura no tiene clase ese día</div><div class="es">Elige otro día, o revisa los tramos horarios de esta clase.</div></div>`;
+  }
+  if(students.length===0){
+    return `${subjectSelect}${daySelect}${slotSelect}<div class="empty-state"><span class="emoji">📚</span><div class="et">Esta clase todavía no tiene alumnos</div></div>`;
   }
 
   const round = getOpenRound(ui.boardSubjectId, ui.boardClassId);
@@ -1226,7 +1243,7 @@ function renderBoardTab(){
     roundHtml = `
       <div class="card" style="padding:16px;">
         <div style="font-size:13.5px;color:var(--ink-soft);margin-bottom:10px;">No hay ninguna ronda abierta para esta clase.</div>
-        <div class="field" style="margin-bottom:10px;"><label>Día en que empieza</label><input type="date" id="boardNewRoundDate" value="${todayISO()}"></div>
+        <div class="field" style="margin-bottom:10px;"><label>Día en que empieza</label><input type="date" id="boardNewRoundDate" value="${ui.boardDay}"></div>
         <button class="btn btn-primary" id="boardStartRound">${ICONS.pencil} Empezar ronda nueva</button>
       </div>`;
   } else {
@@ -1298,7 +1315,7 @@ function renderBoardTab(){
     ${pastRounds.map(r=>`<div style="font-size:12.5px;color:var(--ink-faint);margin-bottom:6px;">Del ${dateLabel(r.startDate)} · ${r.turns.length} turno(s)</div>`).join('')}
   ` : '';
 
-  return `${subjectSelect}${slotSelect}${roundHtml}${pastHtml}`;
+  return `${subjectSelect}${daySelect}${slotSelect}${roundHtml}${pastHtml}`;
 }
 
 function openExportRangeModal(subjectId){
@@ -1999,6 +2016,8 @@ function bindContentEvents(){
   });
   const boardSubjectSelect = document.getElementById('boardSubjectSelect');
   if(boardSubjectSelect) boardSubjectSelect.onchange=(e)=>{ ui.boardSubjectId = e.target.value; ui.boardClassId = null; render(); };
+  const boardDaySelect = document.getElementById('boardDaySelect');
+  if(boardDaySelect) boardDaySelect.onchange=(e)=>{ ui.boardDay = e.target.value; ui.boardClassId = null; render(); };
   const boardSlotSelect = document.getElementById('boardSlotSelect');
   if(boardSlotSelect) boardSlotSelect.onchange=(e)=>{ ui.boardClassId = e.target.value; render(); };
   const boardStartRound = document.getElementById('boardStartRound');
