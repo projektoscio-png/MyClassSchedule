@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-67';
+const APP_VERSION = '2026-08-22-68';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -3038,10 +3038,11 @@ function requestNotifPermission(){
   });
 }
 /* Si a un alumno no se le ha puesto ninguna nota de Gestión en una clase concreta, y
-   ya han pasado 2 días o más desde ese día, se le pone un 2 por defecto (se entiende
-   que, si no se ha anotado nada malo, la gestión ha sido correcta). No se toca nada
-   que ya tenga puesta una nota explícita, y solo se mira hasta 30 días atrás como
-   máximo, para no revisar todo el histórico cada vez. */
+   ya han pasado 2 días o más desde ese día, se le pone una nota por defecto: 0 si ese
+   día tiene marcado Falta, Justificada o Expulsión en Asistència, y 2 en caso
+   contrario (se entiende que, si no se ha anotado nada malo, la gestión ha sido
+   correcta). No se toca nada que ya tenga puesta una nota explícita, y solo se mira
+   hasta 30 días atrás como máximo, para no revisar todo el histórico cada vez. */
 function applyDefaultGestion(){
   const today = todayISO();
   const windowStart = addDaysISO(today, -30);
@@ -3059,7 +3060,8 @@ function applyDefaultGestion(){
         const rec = state.records.find(r=>r.studentId===s.id && r.date===d);
         if(!rec || rec.gestio==null){
           const r2 = getOrCreateRecord(s.id, d);
-          r2.gestio = 2;
+          const hasFJE = (r2.assistencia||[]).some(a=>a==='F'||a==='J'||a==='E');
+          r2.gestio = hasFJE ? 0 : 2;
           persistRecord(r2);
           changed++;
         }
