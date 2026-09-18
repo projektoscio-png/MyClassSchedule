@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-65';
+const APP_VERSION = '2026-08-22-66';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1281,7 +1281,10 @@ function renderBoardTab(){
       <div class="card" style="padding:14px;margin-bottom:10px;">
         <div style="font-size:12.5px;font-weight:700;color:var(--ink-soft);margin-bottom:8px;">Añadir turno</div>
         <div class="field" style="margin-bottom:8px;">
-          <select id="boardTurnStudent">${remaining.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}</select>
+          <select id="boardTurnStudent">
+            <option value="__teacher__">— Yo, el profesor (sin asignar a nadie) —</option>
+            ${remaining.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}
+          </select>
         </div>
         ${(()=>{
           // Se juntan los ejercicios pendientes de TODOS los días de deberes hasta el
@@ -1290,7 +1293,11 @@ function renderBoardTab(){
           // Buscamos por ASIGNATURA (no por tramo horario concreto): si esta clase se
           // da varios días a la semana, el deberes puesto en un tramo tiene que
           // seguir apareciendo aunque hoy se esté usando otro tramo distinto.
-          const deberesItems = state.items.filter(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===ui.boardSubjectId && i.date<=ui.boardDay).sort((a,b)=>a.date.localeCompare(b.date));
+          // Usamos la fecha de HOY de verdad (no el selector de arriba, que es solo
+          // para encontrar/abrir la ronda): si la ronda lleva varios días abierta,
+          // los deberes que se han ido mandando mientras tanto tienen que seguir
+          // apareciendo, sin tener que acordarte de mover ese selector cada día.
+          const deberesItems = state.items.filter(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===ui.boardSubjectId && i.date<=todayISO()).sort((a,b)=>a.date.localeCompare(b.date));
           if(deberesItems.length===0) return '';
           let anyFormatted = false;
           const pendingHtml = deberesItems.map(item=>{
@@ -1313,7 +1320,6 @@ function renderBoardTab(){
             <label style="font-size:11px;">Ejercicios pendientes (toca los que le toquen)</label>
             ${pendingHtml}
           </div>
-          <button type="button" class="settings-action" id="boardMarkDoneByTeacher" style="font-size:11.5px;margin-bottom:8px;">Marcar los tocados como hechos por el profesor (sin asignar a nadie)</button>
           `;
         })()}
         <textarea id="boardTurnExercises" placeholder="Puedes escribir aquí a mano ejercicios que no salgan arriba (o todos, si no siguen ese formato)" style="min-height:50px;margin-bottom:8px;"></textarea>
@@ -2055,17 +2061,16 @@ function bindContentEvents(){
     if(manual) parts.push(manual);
     const exercises = parts.join(', ');
     if(!exercises){ toast('Elige algún ejercicio o escríbelo a mano'); return; }
-    const round = getOpenRound(ui.boardSubjectId, ui.boardClassId);
-    if(round) addTurn(round, studentId, exercises);
-    markExercisesUsed(ui.boardSubjectId, ui.boardClassId, selectedEntries);
-    render();
-  };
-  const boardMarkDoneByTeacher = document.getElementById('boardMarkDoneByTeacher');
-  if(boardMarkDoneByTeacher) boardMarkDoneByTeacher.onclick=()=>{
-    const selectedEntries = [...document.querySelectorAll('.board-exercise-chips button.active')].map(b=>({ date:b.dataset.exdate, key:b.dataset.exkey }));
-    if(selectedEntries.length===0){ toast('Toca primero los ejercicios que has hecho tú en la pizarra'); return; }
-    markExercisesUsed(ui.boardSubjectId, ui.boardClassId, selectedEntries);
-    toast('Marcados como hechos, ya no saldrán en la lista');
+    if(studentId==='__teacher__'){
+      // Los ha hecho el propio profesor: no se asigna a ningún alumno, solo se
+      // marcan como hechos para que dejen de salir en la lista de pendientes.
+      markExercisesUsed(ui.boardSubjectId, ui.boardClassId, selectedEntries);
+      toast('Marcado como hecho por el profesor');
+    } else {
+      const round = getOpenRound(ui.boardSubjectId, ui.boardClassId);
+      if(round) addTurn(round, studentId, exercises);
+      markExercisesUsed(ui.boardSubjectId, ui.boardClassId, selectedEntries);
+    }
     render();
   };
   document.querySelectorAll('[data-undo-done]').forEach(el=>{
