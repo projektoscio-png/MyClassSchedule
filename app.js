@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-61';
+const APP_VERSION = '2026-08-22-62';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1095,6 +1095,18 @@ function closeRound(round){
   round.status = 'closed';
   saveState();
 }
+function deleteRound(round){
+  // Deshacemos las notas de Participació que hubiera puesto esta ronda, solo si nadie
+  // las ha cambiado por otra cosa distinta desde entonces.
+  round.turns.forEach(t=>{
+    if(t.score!=null){
+      const rec = state.records.find(r=>r.studentId===t.studentId && r.date===round.startDate);
+      if(rec && rec.participacio===t.score){ rec.participacio = null; persistRecord(rec); }
+    }
+  });
+  state.boardRounds = state.boardRounds.filter(r=>r.id!==round.id);
+  saveState();
+}
 function addTurn(round, studentId, exercises){
   const turn = { id:uid(), studentId, exercises, score:null, turnDate: todayISO() };
   round.turns.push(turn);
@@ -1128,6 +1140,25 @@ function setTurnScore(round, turnId, score){
    (a, b, c) de un mismo ejercicio en entradas independientes. Si el texto no sigue
    este patrón (ejercicios sin página, "cinc exercicis de...", etc.), devuelve una
    lista vacía, y el profesor puede escribirlo a mano igualmente. */
+/* Marca ejercicios de un día de deberes concreto como "ya hechos" (asignados a un
+   alumno o resueltos por el profesor en la pizarra sin asignar a nadie), para que
+   dejen de aparecer en la lista de pendientes. */
+function markExercisesUsed(subjectId, classId, deberesDate, keys){
+  if(!keys || keys.length===0) return;
+  const item = state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===subjectId && i.classId===classId && i.date===deberesDate);
+  if(!item) return;
+  const set = new Set(item.usedExerciseKeys||[]);
+  keys.forEach(k=>set.add(k));
+  item.usedExerciseKeys = [...set];
+  saveState();
+}
+function unmarkExerciseUsed(subjectId, classId, deberesDate, key){
+  const item = state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===subjectId && i.classId===classId && i.date===deberesDate);
+  if(!item || !item.usedExerciseKeys) return;
+  item.usedExerciseKeys = item.usedExerciseKeys.filter(k=>k!==key);
+  saveState();
+}
+
 function parseDeberesExercises(text){
   if(!text) return [];
   const out = [];
@@ -1234,23 +1265,30 @@ function renderBoardTab(){
           if(deberesItems.length===0) return '';
           if(!ui.boardDeberesDate || !deberesItems.some(d=>d.date===ui.boardDeberesDate)) ui.boardDeberesDate = deberesItems[0].date;
           const chosen = deberesItems.find(d=>d.date===ui.boardDeberesDate);
-          const exercises = parseDeberesExercises(chosen.notes||chosen.title);
+          const allExercises = parseDeberesExercises(chosen.notes||chosen.title);
+          const usedKeys = new Set(chosen.usedExerciseKeys||[]);
+          const exercises = allExercises.filter(e=>!usedKeys.has(e.key));
+          const doneExercises = allExercises.filter(e=>usedKeys.has(e.key));
           return `
           <div class="field" style="margin-bottom:8px;">
             <label style="font-size:11px;">Deberes del día</label>
             <select id="boardDeberesDateSelect">${deberesItems.map(d=>`<option value="${d.date}" ${d.date===ui.boardDeberesDate?'selected':''}>${dateLabel(d.date)}</option>`).join('')}</select>
           </div>
           ${exercises.length ? `
-          <div class="field" style="margin-bottom:8px;">
-            <label style="font-size:11px;">Ejercicios de ese día (toca los que le toquen)</label>
-            <div class="dr-chips" id="boardExerciseChips">${exercises.map(e=>`<button type="button" data-ex="${escapeHtml(e.label)}">${escapeHtml(e.label)}</button>`).join('')}</div>
-          </div>` : `<div style="font-size:11.5px;color:var(--ink-faint);margin-bottom:8px;">Ese texto de deberes no sigue el formato de página/ejercicio, escríbelo abajo a mano.</div>`}
+          <div class="field" style="margin-bottom:4px;">
+            <label style="font-size:11px;">Ejercicios pendientes (toca los que le toquen)</label>
+            <div class="dr-chips" id="boardExerciseChips">${exercises.map(e=>`<button type="button" data-ex="${escapeHtml(e.label)}" data-exkey="${escapeHtml(e.key)}">${escapeHtml(e.label)}</button>`).join('')}</div>
+          </div>
+          <button type="button" class="settings-action" id="boardMarkDoneByTeacher" style="font-size:11.5px;margin-bottom:8px;">Marcar los tocados como hechos por el profesor (sin asignar a nadie)</button>
+          ` : allExercises.length ? `<div style="font-size:11.5px;color:var(--ink-faint);margin-bottom:8px;">Ya no quedan ejercicios pendientes de ese día.</div>` : `<div style="font-size:11.5px;color:var(--ink-faint);margin-bottom:8px;">Ese texto de deberes no sigue el formato de página/ejercicio, escríbelo abajo a mano.</div>`}
+          ${doneExercises.length ? `<div style="font-size:10.5px;color:var(--ink-faint);margin-bottom:8px;">Ya hechos (sin alumno): ${doneExercises.map(e=>`<span data-undo-done="${escapeHtml(e.key)}" style="text-decoration:underline;cursor:pointer;">${escapeHtml(e.label)}</span>`).join(', ')}</div>` : ''}
           `;
         })()}
         <textarea id="boardTurnExercises" placeholder="Puedes escribir aquí a mano ejercicios que no salgan arriba (o todos, si no siguen ese formato)" style="min-height:50px;margin-bottom:8px;"></textarea>
         <button class="btn btn-ghost" id="boardAddTurn">${ICONS.pencil} Añadir</button>
       </div>` : `<div style="font-size:12.5px;color:var(--ink-faint);margin-bottom:10px;">Ya han salido todos los alumnos en esta ronda.</div>`}
       <button class="btn btn-danger" id="boardCloseRound">${ICONS.trash} Cerrar esta ronda y empezar otra</button>
+      <button class="btn btn-ghost" id="boardDeleteRound" style="margin-top:8px;color:var(--danger);">Eliminar esta ronda por completo (p.ej. si era el grupo equivocado)</button>
     `;
   }
 
@@ -1977,7 +2015,9 @@ function bindContentEvents(){
   const boardAddTurn = document.getElementById('boardAddTurn');
   if(boardAddTurn) boardAddTurn.onclick=()=>{
     const studentId = document.getElementById('boardTurnStudent').value;
-    const selectedChips = [...document.querySelectorAll('#boardExerciseChips button.active')].map(b=>b.dataset.ex);
+    const selectedEls = [...document.querySelectorAll('#boardExerciseChips button.active')];
+    const selectedChips = selectedEls.map(b=>b.dataset.ex);
+    const selectedKeys = selectedEls.map(b=>b.dataset.exkey);
     const manual = document.getElementById('boardTurnExercises').value.trim();
     const parts = [...selectedChips];
     if(manual) parts.push(manual);
@@ -1985,13 +2025,45 @@ function bindContentEvents(){
     if(!exercises){ toast('Elige algún ejercicio o escríbelo a mano'); return; }
     const round = getOpenRound(ui.boardSubjectId, ui.boardClassId);
     if(round) addTurn(round, studentId, exercises);
+    markExercisesUsed(ui.boardSubjectId, ui.boardClassId, ui.boardDeberesDate, selectedKeys);
     render();
   };
+  const boardMarkDoneByTeacher = document.getElementById('boardMarkDoneByTeacher');
+  if(boardMarkDoneByTeacher) boardMarkDoneByTeacher.onclick=()=>{
+    const selectedKeys = [...document.querySelectorAll('#boardExerciseChips button.active')].map(b=>b.dataset.exkey);
+    if(selectedKeys.length===0){ toast('Toca primero los ejercicios que has hecho tú en la pizarra'); return; }
+    markExercisesUsed(ui.boardSubjectId, ui.boardClassId, ui.boardDeberesDate, selectedKeys);
+    toast('Marcados como hechos, ya no saldrán en la lista');
+    render();
+  };
+  document.querySelectorAll('[data-undo-done]').forEach(el=>{
+    el.onclick=()=>{
+      unmarkExerciseUsed(ui.boardSubjectId, ui.boardClassId, ui.boardDeberesDate, el.dataset.undoDone);
+      render();
+    };
+  });
   const boardCloseRound = document.getElementById('boardCloseRound');
   if(boardCloseRound) boardCloseRound.onclick=()=>{
     const round = getOpenRound(ui.boardSubjectId, ui.boardClassId);
     if(round) closeRound(round);
     render();
+  };
+  const boardDeleteRound = document.getElementById('boardDeleteRound');
+  if(boardDeleteRound) boardDeleteRound.onclick=()=>{
+    const round = getOpenRound(ui.boardSubjectId, ui.boardClassId);
+    if(!round) return;
+    openModal(`
+      <div class="modal-head"><div class="modal-title">Eliminar ronda</div>
+        <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+      <p style="font-size:13.5px;color:var(--ink);line-height:1.5;">Se eliminará esta ronda entera (con sus ${round.turns.length} turno(s) y las notas de Participació que hubiera puesto). No se puede deshacer.</p>
+      <button class="btn btn-danger" id="confirmDeleteRound">${ICONS.trash} Eliminar de todas formas</button>
+    `);
+    document.getElementById('confirmDeleteRound').onclick=()=>{
+      deleteRound(round);
+      closeModal();
+      render();
+      toast('Ronda eliminada');
+    };
   };
   document.querySelectorAll('[data-remove-turn]').forEach(el=>{
     el.onclick=()=>{
