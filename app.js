@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-59';
+const APP_VERSION = '2026-08-22-61';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -55,7 +55,7 @@ let state = loadState();
 let ui = { tab:'calendar', viewMode:'week', day: mondayIndex(new Date()), weekAnchor: todayISO(), subjectFilter:null, ieducaBmOpen:false };
 
 function defaultState(){
-  return { subjects:[], classes:[], items:[], holidays:[], students:[], records:[], settings:{ notified:[], weekMode:'full', lastModified:0, notificationsEnabled:true } };
+  return { subjects:[], classes:[], items:[], holidays:[], students:[], records:[], boardRounds:[], settings:{ notified:[], weekMode:'full', lastModified:0, notificationsEnabled:true } };
 }
 function migrateState(st){
   // Compatibilidad con copias antiguas: una clase por día (campo "day") -> varios días en un mismo registro ("days")
@@ -67,6 +67,7 @@ function migrateState(st){
   st.settings = Object.assign({ notified:[], weekMode:'full', lastModified:0, notificationsEnabled:true }, st.settings||{});
   if(!Array.isArray(st.students)) st.students = [];
   if(!Array.isArray(st.records)) st.records = [];
+  if(!Array.isArray(st.boardRounds)) st.boardRounds = [];
   // Deberes ya existentes de antes de que se guardara la marca de sincronización con Calendar:
   // se marcan como "ya sincronizados" para que un borrado hecho directamente en Google Calendar
   // se detecte correctamente ya en la primera sincronización, en vez de reescribirse una vez más.
@@ -174,6 +175,7 @@ function toast(msg){
 const TABS = [
   {id:'calendar', label:'Calendario', icon:ICONS.calendar},
   {id:'subjects', label:'Clases', icon:ICONS.listIcon},
+  {id:'board', label:'Pizarra', icon:ICONS.book},
   {id:'tasks', label:'Tareas', icon:ICONS.clipboard},
   {id:'exams', label:'Exámenes', icon:ICONS.examDoc},
   {id:'holidays', label:'Festivos', icon:ICONS.flag},
@@ -1067,7 +1069,199 @@ function persistRecord(rec){
   saveState();
 }
 
-/* ---------- Exportar registro diario a Excel ---------- */
+/* ==================================================================
+   PIZARRA: rondas de turnos para salir a resolver ejercicios de deberes.
+   Una ronda pertenece a una clase (asignatura + tramo horario) concreta,
+   empieza un día determinado, y mientras esté abierta cada alumno solo
+   puede tener UN turno (aunque ese turno incluya varios ejercicios). La
+   nota de cada turno (0/1/2) se escribe siempre como Participació del
+   alumno en el día en que EMPEZÓ la ronda, aunque el turno en sí se
+   resuelva en un día posterior.
+   ================================================================== */
+function getOpenRound(subjectId, classId){
+  return state.boardRounds.find(r=>r.subjectId===subjectId && r.classId===classId && r.status==='open') || null;
+}
+function getRoundsForClass(subjectId, classId){
+  return state.boardRounds.filter(r=>r.subjectId===subjectId && r.classId===classId).sort((a,b)=>b.startDate.localeCompare(a.startDate));
+}
+function startNewRound(subjectId, classId, startDate){
+  state.boardRounds.forEach(r=>{ if(r.subjectId===subjectId && r.classId===classId && r.status==='open') r.status='closed'; });
+  const round = { id:uid(), subjectId, classId, startDate, status:'open', turns:[] };
+  state.boardRounds.push(round);
+  saveState();
+  return round;
+}
+function closeRound(round){
+  round.status = 'closed';
+  saveState();
+}
+function addTurn(round, studentId, exercises){
+  const turn = { id:uid(), studentId, exercises, score:null, turnDate: todayISO() };
+  round.turns.push(turn);
+  saveState();
+  return turn;
+}
+function removeTurn(round, turnId){
+  const turn = round.turns.find(t=>t.id===turnId);
+  round.turns = round.turns.filter(t=>t.id!==turnId);
+  saveState();
+  // Si esa nota ya se había volcado a Participació, la quitamos también de ahí
+  // (solo si nadie más ha vuelto a poner otra cosa distinta desde entonces).
+  if(turn && turn.score!=null){
+    const rec = state.records.find(r=>r.studentId===turn.studentId && r.date===round.startDate);
+    if(rec && rec.participacio===turn.score){ rec.participacio = null; persistRecord(rec); }
+  }
+}
+function setTurnScore(round, turnId, score){
+  const turn = round.turns.find(t=>t.id===turnId);
+  if(!turn) return;
+  turn.score = score;
+  const rec = getOrCreateRecord(turn.studentId, round.startDate);
+  rec.participacio = score;
+  persistRecord(rec);
+  saveState();
+}
+
+/* Pantalla de la pestaña Pizarra: elegir clase, ver/gestionar la ronda abierta. */
+/* Interpreta el texto de deberes con el formato "pàg. N, ex. A, B, C d, e, pàg. M, ex. ..."
+   y lo convierte en una lista de ejercicios seleccionables, separando los apartados
+   (a, b, c) de un mismo ejercicio en entradas independientes. Si el texto no sigue
+   este patrón (ejercicios sin página, "cinc exercicis de...", etc.), devuelve una
+   lista vacía, y el profesor puede escribirlo a mano igualmente. */
+function parseDeberesExercises(text){
+  if(!text) return [];
+  const out = [];
+  // Buscamos cada bloque "pàg. N ... ex. <lista>" hasta el siguiente "pàg." o el final.
+  const pageRe = /p[àa]g\.?\s*(\d+)[.,]?\s*ex\.?\s*([^]*?)(?=p[àa]g\.?\s*\d+|$)/gi;
+  let m;
+  while((m = pageRe.exec(text)) !== null){
+    const page = m[1];
+    const list = m[2];
+    // Separamos por comas, pero unas van justo antes de la lista de otra página: cortamos
+    // también si aparece un punto seguido (fin de frase) para no arrastrar texto de más.
+    const tokens = list.split(/[,;]/).map(t=>t.trim()).filter(Boolean);
+    let currentNum = null;
+    tokens.forEach(tok=>{
+      const mFull = tok.match(/^(\d+)\s*([a-zà-ÿ])?\.?$/i);
+      if(mFull){
+        currentNum = mFull[1];
+        out.push({ page, num: currentNum, letter: mFull[2]||null });
+      } else {
+        const mLetter = tok.match(/^([a-zà-ÿ])\.?$/i);
+        if(mLetter && currentNum){
+          out.push({ page, num: currentNum, letter: mLetter[1] });
+        }
+        // Si no encaja ni como número ni como letra suelta, se ignora ese trozo
+        // (probablemente sea texto explicativo, no un ejercicio).
+      }
+    });
+  }
+  return out.map(e=>({
+    label: `pàg. ${e.page}, ex. ${e.num}${e.letter?e.letter:''}`,
+    key: `${e.page}-${e.num}${e.letter||''}`,
+  }));
+}
+
+function renderBoardTab(){
+  const subjects = [...state.subjects].sort((a,b)=>a.name.localeCompare(b.name,'es'));
+  if(subjects.length===0){
+    return `<div class="empty-state"><span class="emoji">📚</span><div class="et">Todavía no hay clases</div><div class="es">Crea una clase primero en la pestaña Clases.</div></div>`;
+  }
+  if(!ui.boardSubjectId || !subjects.some(s=>s.id===ui.boardSubjectId)) ui.boardSubjectId = subjects[0].id;
+  const subj = getSubject(ui.boardSubjectId);
+  const slots = state.classes.filter(c=>c.subjectId===ui.boardSubjectId);
+  if(!ui.boardClassId || !slots.some(s=>s.id===ui.boardClassId)) ui.boardClassId = slots.length?slots[0].id:null;
+  const cls = ui.boardClassId ? state.classes.find(c=>c.id===ui.boardClassId) : null;
+  const students = state.students.filter(s=>s.subjectId===ui.boardSubjectId).sort((a,b)=>a.name.localeCompare(b.name,'es'));
+
+  const subjectSelect = `<div class="field">
+    <label>Clase</label>
+    <select id="boardSubjectSelect">${subjects.map(s=>`<option value="${s.id}" ${s.id===ui.boardSubjectId?'selected':''}>${escapeHtml(s.name)}</option>`).join('')}</select>
+  </div>`;
+  const slotSelect = slots.length ? `<div class="field">
+    <label>Tramo horario</label>
+    <select id="boardSlotSelect">${slots.map(s=>`<option value="${s.id}" ${s.id===ui.boardClassId?'selected':''}>${s.start}–${s.end}${s.room?' · '+escapeHtml(s.room):''}</option>`).join('')}</select>
+  </div>` : '';
+
+  if(!cls || students.length===0){
+    return `${subjectSelect}${slotSelect}<div class="empty-state"><span class="emoji">📚</span><div class="et">${!cls?'Esta clase todavía no tiene ningún tramo horario':'Esta clase todavía no tiene alumnos'}</div></div>`;
+  }
+
+  const round = getOpenRound(ui.boardSubjectId, ui.boardClassId);
+  const pastRounds = getRoundsForClass(ui.boardSubjectId, ui.boardClassId).filter(r=>r.status==='closed');
+
+  let roundHtml;
+  if(!round){
+    roundHtml = `
+      <div class="card" style="padding:16px;">
+        <div style="font-size:13.5px;color:var(--ink-soft);margin-bottom:10px;">No hay ninguna ronda abierta para esta clase.</div>
+        <div class="field" style="margin-bottom:10px;"><label>Día en que empieza</label><input type="date" id="boardNewRoundDate" value="${todayISO()}"></div>
+        <button class="btn btn-primary" id="boardStartRound">${ICONS.pencil} Empezar ronda nueva</button>
+      </div>`;
+  } else {
+    const wentIds = new Set(round.turns.map(t=>t.studentId));
+    const remaining = students.filter(s=>!wentIds.has(s.id));
+    const turnsHtml = round.turns.map(t=>{
+      const st = state.students.find(s=>s.id===t.studentId);
+      return `<div class="card" style="padding:11px 13px;margin-bottom:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+          <div style="flex:1;min-width:0;">
+            <b style="font-size:13.5px;">${escapeHtml(st?st.name:'?')}</b>
+            <div style="font-size:12.5px;color:var(--ink-soft);margin-top:2px;white-space:pre-wrap;">${escapeHtml(t.exercises)}</div>
+            <div style="font-size:10.5px;color:var(--ink-faint);margin-top:3px;">Turno del ${dateLabel(t.turnDate)}</div>
+          </div>
+          <button data-remove-turn="${t.id}" class="student-list-del" aria-label="Eliminar turno" style="flex-shrink:0;">${ICONS.x}</button>
+        </div>
+        <div class="dr-chips" style="margin-top:8px;">
+          ${['0','1','2'].map(v=>`<button type="button" class="board-score-chip ${String(t.score)===v?'active':''}" data-turn="${t.id}" data-score="${v}">${v}</button>`).join('')}
+        </div>
+      </div>`;
+    }).join('');
+
+    roundHtml = `
+      <div class="field">
+        <label>Ronda abierta desde el ${dateLabel(round.startDate)}</label>
+        ${turnsHtml || `<div style="font-size:13px;color:var(--ink-faint);margin-bottom:10px;">Todavía no ha salido nadie en esta ronda.</div>`}
+      </div>
+      ${remaining.length ? `
+      <div class="card" style="padding:14px;margin-bottom:10px;">
+        <div style="font-size:12.5px;font-weight:700;color:var(--ink-soft);margin-bottom:8px;">Añadir turno</div>
+        <div class="field" style="margin-bottom:8px;">
+          <select id="boardTurnStudent">${remaining.map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}</select>
+        </div>
+        ${(()=>{
+          const deberesItems = state.items.filter(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===ui.boardSubjectId && i.classId===ui.boardClassId).sort((a,b)=>b.date.localeCompare(a.date));
+          if(deberesItems.length===0) return '';
+          if(!ui.boardDeberesDate || !deberesItems.some(d=>d.date===ui.boardDeberesDate)) ui.boardDeberesDate = deberesItems[0].date;
+          const chosen = deberesItems.find(d=>d.date===ui.boardDeberesDate);
+          const exercises = parseDeberesExercises(chosen.notes||chosen.title);
+          return `
+          <div class="field" style="margin-bottom:8px;">
+            <label style="font-size:11px;">Deberes del día</label>
+            <select id="boardDeberesDateSelect">${deberesItems.map(d=>`<option value="${d.date}" ${d.date===ui.boardDeberesDate?'selected':''}>${dateLabel(d.date)}</option>`).join('')}</select>
+          </div>
+          ${exercises.length ? `
+          <div class="field" style="margin-bottom:8px;">
+            <label style="font-size:11px;">Ejercicios de ese día (toca los que le toquen)</label>
+            <div class="dr-chips" id="boardExerciseChips">${exercises.map(e=>`<button type="button" data-ex="${escapeHtml(e.label)}">${escapeHtml(e.label)}</button>`).join('')}</div>
+          </div>` : `<div style="font-size:11.5px;color:var(--ink-faint);margin-bottom:8px;">Ese texto de deberes no sigue el formato de página/ejercicio, escríbelo abajo a mano.</div>`}
+          `;
+        })()}
+        <textarea id="boardTurnExercises" placeholder="Puedes escribir aquí a mano ejercicios que no salgan arriba (o todos, si no siguen ese formato)" style="min-height:50px;margin-bottom:8px;"></textarea>
+        <button class="btn btn-ghost" id="boardAddTurn">${ICONS.pencil} Añadir</button>
+      </div>` : `<div style="font-size:12.5px;color:var(--ink-faint);margin-bottom:10px;">Ya han salido todos los alumnos en esta ronda.</div>`}
+      <button class="btn btn-danger" id="boardCloseRound">${ICONS.trash} Cerrar esta ronda y empezar otra</button>
+    `;
+  }
+
+  const pastHtml = pastRounds.length ? `
+    <div style="height:1px;background:var(--line);margin:20px 0 14px;"></div>
+    <div style="font-size:13px;font-weight:700;color:var(--ink-soft);margin-bottom:10px;">Rondas anteriores</div>
+    ${pastRounds.map(r=>`<div style="font-size:12.5px;color:var(--ink-faint);margin-bottom:6px;">Del ${dateLabel(r.startDate)} · ${r.turns.length} turno(s)</div>`).join('')}
+  ` : '';
+
+  return `${subjectSelect}${slotSelect}${roundHtml}${pastHtml}`;
+}
 
 function openExportRangeModal(subjectId){
   const allSubjects = [...state.subjects].filter(s=> state.students.some(st=>st.subjectId===s.id)).sort((a,b)=>a.name.localeCompare(b.name,'es'));
@@ -1739,6 +1933,7 @@ function render(){
   const content = document.getElementById('content');
   if(ui.tab==='calendar') content.innerHTML = renderSchedule();
   else if(ui.tab==='subjects'){ content.innerHTML = renderSubjectsList(); fillSubjectPhotoCounts(content); }
+  else if(ui.tab==='board') content.innerHTML = renderBoardTab();
   else if(ui.tab==='tasks') content.innerHTML = renderTasksSplitByKind();
   else if(ui.tab==='exams') content.innerHTML = renderItemsList('exam');
   else if(ui.tab==='holidays') content.innerHTML = renderHolidays();
@@ -1763,6 +1958,54 @@ function alignWeekGridHeader(){
 function bindContentEvents(){
   document.querySelectorAll('[data-open-class]').forEach(el=>{
     el.onclick=(e)=>{ e.stopPropagation(); openClassOccurrenceModal(el.dataset.openClass, el.dataset.date); };
+  });
+  const boardSubjectSelect = document.getElementById('boardSubjectSelect');
+  if(boardSubjectSelect) boardSubjectSelect.onchange=(e)=>{ ui.boardSubjectId = e.target.value; ui.boardClassId = null; render(); };
+  const boardSlotSelect = document.getElementById('boardSlotSelect');
+  if(boardSlotSelect) boardSlotSelect.onchange=(e)=>{ ui.boardClassId = e.target.value; render(); };
+  const boardStartRound = document.getElementById('boardStartRound');
+  if(boardStartRound) boardStartRound.onclick=()=>{
+    const d = document.getElementById('boardNewRoundDate').value || todayISO();
+    startNewRound(ui.boardSubjectId, ui.boardClassId, d);
+    render();
+  };
+  const boardDeberesDateSelect = document.getElementById('boardDeberesDateSelect');
+  if(boardDeberesDateSelect) boardDeberesDateSelect.onchange=(e)=>{ ui.boardDeberesDate = e.target.value; render(); };
+  document.querySelectorAll('#boardExerciseChips button').forEach(el=>{
+    el.onclick=()=>{ el.classList.toggle('active'); };
+  });
+  const boardAddTurn = document.getElementById('boardAddTurn');
+  if(boardAddTurn) boardAddTurn.onclick=()=>{
+    const studentId = document.getElementById('boardTurnStudent').value;
+    const selectedChips = [...document.querySelectorAll('#boardExerciseChips button.active')].map(b=>b.dataset.ex);
+    const manual = document.getElementById('boardTurnExercises').value.trim();
+    const parts = [...selectedChips];
+    if(manual) parts.push(manual);
+    const exercises = parts.join(', ');
+    if(!exercises){ toast('Elige algún ejercicio o escríbelo a mano'); return; }
+    const round = getOpenRound(ui.boardSubjectId, ui.boardClassId);
+    if(round) addTurn(round, studentId, exercises);
+    render();
+  };
+  const boardCloseRound = document.getElementById('boardCloseRound');
+  if(boardCloseRound) boardCloseRound.onclick=()=>{
+    const round = getOpenRound(ui.boardSubjectId, ui.boardClassId);
+    if(round) closeRound(round);
+    render();
+  };
+  document.querySelectorAll('[data-remove-turn]').forEach(el=>{
+    el.onclick=()=>{
+      const round = getOpenRound(ui.boardSubjectId, ui.boardClassId);
+      if(round) removeTurn(round, el.dataset.removeTurn);
+      render();
+    };
+  });
+  document.querySelectorAll('.board-score-chip').forEach(el=>{
+    el.onclick=()=>{
+      const round = getOpenRound(ui.boardSubjectId, ui.boardClassId);
+      if(round) setTurnScore(round, el.dataset.turn, Number(el.dataset.score));
+      render();
+    };
   });
   document.querySelectorAll('[data-open-item]').forEach(el=>{
     el.onclick=()=>{
