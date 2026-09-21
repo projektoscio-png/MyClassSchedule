@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-70';
+const APP_VERSION = '2026-08-22-71';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1078,15 +1078,18 @@ function persistRecord(rec){
    alumno en el día en que EMPEZÓ la ronda, aunque el turno en sí se
    resuelva en un día posterior.
    ================================================================== */
+/* Se busca por ASIGNATURA (no por tramo horario concreto): igual que con los
+   deberes, si esta clase se da varios días a la semana, una ronda abierta en un
+   tramo tiene que seguir viéndose aunque hoy se esté usando otro tramo distinto. */
 function getOpenRound(subjectId, classId){
-  return state.boardRounds.find(r=>r.subjectId===subjectId && r.classId===classId && r.status==='open') || null;
+  return state.boardRounds.find(r=>r.subjectId===subjectId && r.status==='open') || null;
 }
 function getRoundsForClass(subjectId, classId){
-  return state.boardRounds.filter(r=>r.subjectId===subjectId && r.classId===classId).sort((a,b)=>b.startDate.localeCompare(a.startDate));
+  return state.boardRounds.filter(r=>r.subjectId===subjectId).sort((a,b)=>b.startDate.localeCompare(a.startDate));
 }
 function startNewRound(subjectId, classId, startDate){
-  state.boardRounds.forEach(r=>{ if(r.subjectId===subjectId && r.classId===classId && r.status==='open') r.status='closed'; });
-  const round = { id:uid(), subjectId, classId, startDate, status:'open', turns:[] };
+  state.boardRounds.forEach(r=>{ if(r.subjectId===subjectId && r.status==='open') r.status='closed'; });
+  const round = { id:uid(), subjectId, classId, startDate, status:'open', turns:[], teacherDone:[] };
   state.boardRounds.push(round);
   saveState();
   return round;
@@ -1105,6 +1108,11 @@ function deleteRound(round){
     }
   });
   state.boardRounds = state.boardRounds.filter(r=>r.id!==round.id);
+  saveState();
+}
+function addTeacherDone(round, exercises){
+  if(!round.teacherDone) round.teacherDone = [];
+  round.teacherDone.push({ id:uid(), exercises, doneDate: todayISO() });
   saveState();
 }
 function addTurn(round, studentId, exercises){
@@ -1335,20 +1343,27 @@ function renderBoardTab(){
     <div style="font-size:13px;font-weight:700;color:var(--ink-soft);margin-bottom:10px;">Rondas anteriores</div>
     ${pastRounds.map(r=>{
       const isOpenDetail = ui.boardExpandedPastRound===r.id;
-      const turnsDetail = r.turns.length ? r.turns.map(t=>{
+      const teacherDone = r.teacherDone||[];
+      const turnsDetail = r.turns.map(t=>{
         const st = state.students.find(s=>s.id===t.studentId);
         return `<div style="padding:8px 0;border-bottom:1px solid var(--line);">
           <b style="font-size:12.5px;">${escapeHtml(st?st.name:'?')}</b>
           <div style="font-size:12px;color:var(--ink-soft);margin-top:2px;white-space:pre-wrap;">${escapeHtml(t.exercises)}</div>
           <div style="font-size:11px;color:var(--ink-faint);margin-top:2px;">Nota: ${t.score==null?'sin poner':t.score} · turno del ${dateLabel(t.turnDate)}</div>
         </div>`;
-      }).join('') : `<div style="font-size:12px;color:var(--ink-faint);padding:8px 0;">Todos los ejercicios los hizo el profesor directamente, sin turnos de alumnos.</div>`;
+      }).join('');
+      const teacherDetail = teacherDone.map(td=>`<div style="padding:8px 0;border-bottom:1px solid var(--line);">
+        <b style="font-size:12.5px;">👨‍🏫 Hecho por el profesor</b>
+        <div style="font-size:12px;color:var(--ink-soft);margin-top:2px;white-space:pre-wrap;">${escapeHtml(td.exercises)}</div>
+        <div style="font-size:11px;color:var(--ink-faint);margin-top:2px;">${dateLabel(td.doneDate)}</div>
+      </div>`).join('');
+      const detail = (turnsDetail+teacherDetail) || `<div style="font-size:12px;color:var(--ink-faint);padding:8px 0;">No queda ningún detalle guardado de esta ronda.</div>`;
       return `<div class="card" style="padding:0;margin-bottom:8px;overflow:hidden;">
         <div data-toggle-past-round="${r.id}" style="padding:11px 13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;">
-          <span style="font-size:12.5px;color:var(--ink-soft);">Del ${dateLabel(r.startDate)} · ${r.turns.length} turno(s)</span>
+          <span style="font-size:12.5px;color:var(--ink-soft);">Del ${dateLabel(r.startDate)} · ${r.turns.length} turno(s)${teacherDone.length?' · '+teacherDone.length+' hecho(s) por el profesor':''}</span>
           <span style="color:var(--ink-faint);transform:rotate(${isOpenDetail?'90deg':'0deg'});">${ICONS.chevR}</span>
         </div>
-        ${isOpenDetail ? `<div style="padding:0 13px 11px;">${turnsDetail}</div>` : ''}
+        ${isOpenDetail ? `<div style="padding:0 13px 11px;">${detail}</div>` : ''}
       </div>`;
     }).join('')}
   ` : '';
@@ -2080,7 +2095,10 @@ function bindContentEvents(){
     if(!exercises){ toast('Elige algún ejercicio o escríbelo a mano'); return; }
     if(studentId==='__teacher__'){
       // Los ha hecho el propio profesor: no se asigna a ningún alumno, solo se
-      // marcan como hechos para que dejen de salir en la lista de pendientes.
+      // marcan como hechos para que dejen de salir en la lista de pendientes, y se
+      // dejan anotados en esta ronda para poder consultarlos luego.
+      const round = getOpenRound(ui.boardSubjectId, ui.boardClassId);
+      if(round) addTeacherDone(round, exercises);
       markExercisesUsed(ui.boardSubjectId, ui.boardClassId, selectedEntries);
       toast('Marcado como hecho por el profesor');
     } else {
