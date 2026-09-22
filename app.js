@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-73';
+const APP_VERSION = '2026-08-22-74';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -1394,23 +1394,8 @@ function openExportRangeModal(subjectId){
       <input type="date" id="expDay" value="${todayISO()}">
     </div>
     <button class="btn btn-primary" id="expGo">${ICONS.download} Descargar Excel</button>
-    <button class="btn btn-ghost" id="expIeduca" style="margin-top:8px;">📋 Copiar para iEduca</button>
-    <button class="btn btn-ghost" id="expIeducaPaste" style="margin-top:8px;">📥 Pegar desde iEduca</button>
   `);
 
-  document.getElementById('expIeducaPaste').onclick=()=>{
-    const sid = document.getElementById('expSubject').value;
-    const day = document.getElementById('expDay').value;
-    if(!day){ toast('Indica un día'); return; }
-    pasteDayFromIeduca(sid, day);
-  };
-
-  document.getElementById('expIeduca').onclick=()=>{
-    const sid = document.getElementById('expSubject').value;
-    const day = document.getElementById('expDay').value;
-    if(!day){ toast('Indica un día'); return; }
-    copyDayForIeduca(sid, day);
-  };
   document.getElementById('expGo').onclick=()=>{
     const sid = document.getElementById('expSubject').value;
     const day = document.getElementById('expDay').value;
@@ -2012,6 +1997,24 @@ function renderHolidays(){
         <div style="font-size:12.5px;font-weight:700;color:var(--ink-soft);margin-bottom:4px;">Leer de iEduca</div>
         <code class="ieduca-bm-code" data-bm="leer" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--bg);padding:10px 12px;border-radius:8px;font-size:11px;cursor:pointer;">${escapeHtml(IEDUCA_BOOKMARKLETS.leer)}</code>
       </div>
+      ${(()=>{
+        const subjects = [...state.subjects].sort((a,b)=>a.name.localeCompare(b.name,'es'));
+        if(subjects.length===0) return '';
+        if(!ui.ieducaCopySubjectId || !subjects.some(s=>s.id===ui.ieducaCopySubjectId)) ui.ieducaCopySubjectId = subjects[0].id;
+        if(!ui.ieducaCopyDay) ui.ieducaCopyDay = todayISO();
+        return `
+        <div style="height:1px;background:var(--line);margin:16px 0;"></div>
+        <div style="font-size:12.5px;font-weight:700;color:var(--ink-soft);margin-bottom:8px;">Copiar / pegar datos de un día</div>
+        <div class="field" style="margin-bottom:8px;">
+          <select id="ieducaCopySubject">${subjects.map(s=>`<option value="${s.id}" ${s.id===ui.ieducaCopySubjectId?'selected':''}>${escapeHtml(s.name)}</option>`).join('')}</select>
+        </div>
+        <div class="field" style="margin-bottom:10px;">
+          <input type="date" id="ieducaCopyDay" value="${ui.ieducaCopyDay}">
+        </div>
+        <button class="btn btn-ghost" id="ieducaCopyBtn" style="margin-bottom:8px;">📋 Copiar para iEduca</button>
+        <button class="btn btn-ghost" id="ieducaPasteBtn">📥 Pegar desde iEduca</button>
+        `;
+      })()}
     </div>` : ''}
   </div>
   <div class="card">
@@ -2208,6 +2211,24 @@ function bindContentEvents(){
       navigator.clipboard.writeText(text).then(()=>toast('Copiado. Pégalo como URL al crear el marcador.')).catch(()=>toast('No se pudo copiar'));
     };
   });
+  const ieducaCopySubject = document.getElementById('ieducaCopySubject');
+  if(ieducaCopySubject) ieducaCopySubject.onclick=(e)=>e.stopPropagation();
+  if(ieducaCopySubject) ieducaCopySubject.onchange=(e)=>{ ui.ieducaCopySubjectId = e.target.value; };
+  const ieducaCopyDay = document.getElementById('ieducaCopyDay');
+  if(ieducaCopyDay) ieducaCopyDay.onclick=(e)=>e.stopPropagation();
+  if(ieducaCopyDay) ieducaCopyDay.onchange=(e)=>{ ui.ieducaCopyDay = e.target.value; };
+  const ieducaCopyBtn = document.getElementById('ieducaCopyBtn');
+  if(ieducaCopyBtn) ieducaCopyBtn.onclick=(e)=>{
+    e.stopPropagation();
+    if(!ui.ieducaCopyDay){ toast('Indica un día'); return; }
+    copyDayForIeduca(ui.ieducaCopySubjectId, ui.ieducaCopyDay);
+  };
+  const ieducaPasteBtn = document.getElementById('ieducaPasteBtn');
+  if(ieducaPasteBtn) ieducaPasteBtn.onclick=(e)=>{
+    e.stopPropagation();
+    if(!ui.ieducaCopyDay){ toast('Indica un día'); return; }
+    pasteDayFromIeduca(ui.ieducaCopySubjectId, ui.ieducaCopyDay);
+  };
   const btnReset = document.getElementById('btnReset');
   if(btnReset) btnReset.onclick = confirmReset;
   const weekModeSeg = document.getElementById('weekModeSeg');
