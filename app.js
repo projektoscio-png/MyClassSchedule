@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-72';
+const APP_VERSION = '2026-08-22-73';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -3287,11 +3287,11 @@ async function driveSyncUpload(opts){
     }
     localStorage.setItem('driveLastSync', String(Date.now()));
     if(showToast) toast('Sincronizado con Google Drive');
-    if(document.getElementById('content') && (ui.tab==='settings'||ui.tab==='calendar')) render();
+    renderDriveHint(); // aviso siempre visible, sin recargar el contenido de la pestaña actual
   }catch(e){
     if(!interactive){ localStorage.setItem('driveNeedsReconnect','1'); }
     if(showToast) toast('No se pudo sincronizar: '+e.message);
-    if(document.getElementById('content') && (ui.tab==='settings'||ui.tab==='calendar')) render();
+    renderDriveHint(); // aviso siempre visible, sin recargar el contenido de la pestaña actual
   } finally {
     driveSyncing = false;
   }
@@ -3358,7 +3358,7 @@ async function driveCheckOnLoad(onSafeToSync){
     localStorage.setItem('driveNeedsReconnect','1');
     if(onSafeToSync) onSafeToSync(); // sin conexión: seguimos con lo único que tenemos, lo local
   }
-  if(document.getElementById('content') && (ui.tab==='settings'||ui.tab==='calendar')) render();
+  renderDriveHint(); // aviso siempre visible, sin recargar el contenido de la pestaña actual
 }
 
 async function driveConnect(){
@@ -3637,7 +3637,7 @@ function renderInstallHint(){
 function renderDriveHint(){
   const wrap = document.getElementById('driveHintWrap');
   if(!wrap) return;
-  const show = driveConfigured() && driveIsConnected() && localStorage.getItem('driveNeedsReconnect') && ui.tab==='calendar';
+  const show = driveConfigured() && driveIsConnected() && localStorage.getItem('driveNeedsReconnect');
   if(show){
     wrap.innerHTML = `<div class="drive-hint">${ICONS.cloud}
       <div style="flex:1">La sincronización con Drive necesita que vuelvas a iniciar sesión.</div>
