@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-71';
+const APP_VERSION = '2026-08-22-72';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -3695,12 +3695,14 @@ initSwipeNav();
 updateNotifBellIcon();
 checkReminders();
 setInterval(checkReminders, 60000);
-setTimeout(()=>{ driveCheckOnLoad(autoSyncDeberesOnLoad); }, 1200);
-setTimeout(drivePhotosDownloadIfNewer, 1800);
 setTimeout(()=>{
-  const n = applyDefaultGestion();
-  if(n>0){ render(); toast(`Gestión puesta a 2 por defecto en ${n} caso(s) sin nota tras 2 días`); }
-}, 800);
+  driveCheckOnLoad(()=>{
+    autoSyncDeberesOnLoad();
+    const n = applyDefaultGestion();
+    if(n>0){ render(); toast(`Gestión puesta a 2 por defecto en ${n} caso(s) sin nota tras 2 días`); }
+  });
+}, 1200);
+setTimeout(drivePhotosDownloadIfNewer, 1800);
 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
