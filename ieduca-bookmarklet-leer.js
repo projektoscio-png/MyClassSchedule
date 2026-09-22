@@ -55,13 +55,24 @@
     return withDate || matches[0] || null;
   }
   function extractObsText(doc){
-    // El texto real de cada observación está en ".observacio-bloc-text"; la cabecera
-    // con nombre/fecha/hora/materia va aparte, en ".observacio-bloc-info", y no la
-    // queremos. Si un alumno tiene varias observaciones guardadas para este mismo
-    // día/hora, se juntan todas (una por línea).
-    const blocks = doc.querySelectorAll('.observacio-bloc-text');
+    // Esta ventana lista TODAS las observaciones de ese alumno ese día, sean de la
+    // materia/profesor que sean -- hay que quedarse solo con las de ESTA hora
+    // concreta. El propio formulario de arriba dice la hora de la sesión actual
+    // (p.ej. "Hora: 09:00-10:00"), así que comparamos cada observación con esa
+    // misma franja horaria, que también aparece en su cabecera ".observacio-bloc-info".
+    const h3 = Array.from(doc.querySelectorAll('h3')).find(h=>/hora:/i.test(h.textContent));
+    const horaMatch = h3 && h3.textContent.match(/(\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})/);
+    const hora = horaMatch ? horaMatch[1].replace(/\s+/g,'') : null;
+
+    const blocks = Array.from(doc.querySelectorAll('.observacio-bloc'));
     if(blocks.length === 0) return '';
-    return Array.from(blocks).map(b=>(b.textContent||'').trim()).filter(Boolean).join('\n');
+    const relevant = hora
+      ? blocks.filter(b=>{
+          const info = (b.querySelector('.observacio-bloc-info')?.textContent||'').replace(/\s+/g,'');
+          return info.includes(hora);
+        })
+      : blocks; // si no se pudo leer la hora de referencia, mejor no perder nada
+    return relevant.map(b=>(b.querySelector('.observacio-bloc-text')?.textContent||'').trim()).filter(Boolean).join('\n');
   }
 
   const results = directory.map(d=>{
