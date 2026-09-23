@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-86';
+const APP_VERSION = '2026-08-22-87';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -556,7 +556,7 @@ function openSubjectDetailModal(subjectId){
           <span class="student-list-num">${idx+1}</span>
           <div class="student-avatar" data-photo-for="${s.id}" data-edit-photo="${s.id}" title="Toca para añadir/cambiar foto">${escapeHtml((s.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
           <span class="student-list-name">${escapeHtml(s.name)}</span>
-          <span title="${s.dossierPaid?'Dossier pagado':'Dossier sin pagar'}" style="font-size:15px;flex-shrink:0;">${s.dossierPaid?'💰':'<span style=\"opacity:.25;\">💰</span>'}</span>
+          ${s.motxilla ? `<span title="Motxilla (no paga)" style="font-size:15px;flex-shrink:0;">🎒</span>` : `<span title="${s.dossierPaid?'Dossier pagado':'Dossier sin pagar'}" style="font-size:15px;flex-shrink:0;">${s.dossierPaid?'💰':'<span style=\"opacity:.25;\">💰</span>'}</span>`}
           <button data-edit-student="${s.id}" aria-label="Editar nombre" class="student-list-del" style="color:var(--ink-soft);">${ICONS.pencil}</button>
           <button data-del-student="${s.id}" aria-label="Eliminar" class="student-list-del">${ICONS.x}</button>
         </div>
