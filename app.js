@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-83';
+const APP_VERSION = '2026-08-22-84';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -704,6 +704,8 @@ function removeExemptPeriod(student, periodId){
 function openEditStudentNameModal(studentId, subjectId){
   const student = state.students.find(s=>s.id===studentId);
   if(!student) return;
+  const roster = state.students.filter(s=>s.subjectId===subjectId).sort((a,b)=>a.name.localeCompare(b.name,'es'));
+  const idx = roster.findIndex(s=>s.id===studentId);
   const parts = student.name.split(',');
   const currentSurname = (parts[0]||'').trim();
   const currentFirstname = (parts[1]||'').trim();
@@ -711,6 +713,11 @@ function openEditStudentNameModal(studentId, subjectId){
   openModal(`
     <div class="modal-head"><div class="modal-title">Ficha del alumno</div>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:-4px 0 14px;">
+      <button class="dr-nav-btn" id="fStudentPrev" ${idx<=0?'disabled style="opacity:.3;"':''}>${ICONS.chevL}</button>
+      <span style="font-size:12px;color:var(--ink-faint);">${idx+1} / ${roster.length}</span>
+      <button class="dr-nav-btn" id="fStudentNext" ${idx>=roster.length-1?'disabled style="opacity:.3;"':''}>${ICONS.chevR}</button>
+    </div>
     <div class="row2">
       <div class="field"><label>Apellidos</label><input type="text" id="fStudentSurname" value="${escapeHtml(currentSurname)}"></div>
       <div class="field"><label>Nombre</label><input type="text" id="fStudentFirstname" value="${escapeHtml(currentFirstname)}"></div>
@@ -752,6 +759,10 @@ function openEditStudentNameModal(studentId, subjectId){
     saveState(); render(); closeModal(); openSubjectDetailModal(subjectId); toast('Nombre actualizado');
   };
   [inpSur, inpName].forEach(el=> el.addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('fStudentSave').click(); }));
+  const fStudentPrev = document.getElementById('fStudentPrev');
+  if(fStudentPrev) fStudentPrev.onclick=()=>{ if(idx>0) openEditStudentNameModal(roster[idx-1].id, subjectId); };
+  const fStudentNext = document.getElementById('fStudentNext');
+  if(fStudentNext) fStudentNext.onclick=()=>{ if(idx<roster.length-1) openEditStudentNameModal(roster[idx+1].id, subjectId); };
   document.getElementById('fToggleDossier').onclick=()=>{
     student.dossierPaid = !student.dossierPaid;
     saveState();
@@ -1692,7 +1703,7 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
         <div class="dr-student-avatar-lg" data-photo-for="${student.id}" data-view-photo="${student.id}" title="Toca para ver la foto en grande">${escapeHtml((student.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
         <div class="dr-student-name"><span class="dr-student-num">${idx+1}</span>${escapeHtml(student.name)}</div>
         <div class="dr-student-pos">${idx+1} / ${roster.length} · ${escapeHtml(subj.name)} · ${dateLabel}</div>
-        <div id="drDossierToggle" style="font-size:10.5px;font-weight:800;letter-spacing:.03em;margin-top:2px;color:${student.dossierPaid?'#1a9e5c':'#d64545'};cursor:pointer;text-decoration:underline;" title="Toca para cambiar">${student.dossierPaid?'PAGADO':'NO PAGADO'}</div>
+        <div style="font-size:10.5px;font-weight:800;letter-spacing:.03em;margin-top:2px;color:${student.dossierPaid?'#1a9e5c':'#d64545'};">${student.dossierPaid?'PAGADO':'NO PAGADO'}</div>
       </div>
       <button class="dr-nav-btn dr-student-arrow" id="drNextStudent" ${idx===roster.length-1?'disabled style="opacity:.3;"':''}>${ICONS.chevR}</button>
     </div>
@@ -1764,11 +1775,6 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
 
   document.getElementById('drPrevStudent').onclick=()=>{ if(idx>0) goTo(subjectId, dateIso, roster[idx-1].id); };
   document.getElementById('drNextStudent').onclick=()=>{ if(idx<roster.length-1) goTo(subjectId, dateIso, roster[idx+1].id); };
-  document.getElementById('drDossierToggle').onclick=()=>{
-    student.dossierPaid = !student.dossierPaid;
-    saveState();
-    goTo(subjectId, dateIso, student.id);
-  };
 
   document.querySelectorAll('#drAssist button').forEach(b=>{
     b.onclick=()=>{
