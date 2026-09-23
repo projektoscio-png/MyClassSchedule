@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-74';
+const APP_VERSION = '2026-08-22-75';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -3353,29 +3353,43 @@ function driveOfferRemoteUpdate(remoteData, onApplied){
    copia local que sabemos que está desactualizada y la hagan parecer la más reciente
    sin serlo de verdad. */
 async function driveCheckOnLoad(onSafeToSync){
-  if(!driveConfigured() || !driveIsConnected()){ if(onSafeToSync) onSafeToSync(); return; }
+  if(!driveConfigured() || !driveIsConnected()){
+    console.log('[MiHorario/Drive] No configurado o no conectado, se omite la comprobación.');
+    if(onSafeToSync) onSafeToSync();
+    return;
+  }
   try{
+    console.log('[MiHorario/Drive] Pidiendo token (silencioso)...');
     const token = await driveGetToken(true);
+    console.log('[MiHorario/Drive] Token obtenido. Buscando archivo en Drive...');
     localStorage.removeItem('driveNeedsReconnect');
     const remote = await driveFindFile(token);
     if(!remote){
+      console.log('[MiHorario/Drive] No hay archivo en Drive todavía.');
       if(onSafeToSync) onSafeToSync();
       return;
     }
+    console.log('[MiHorario/Drive] Archivo encontrado, descargando para comparar...');
     const remoteData = await driveDownload(token, remote.id);
     const remoteModified = (remoteData.settings && remoteData.settings.lastModified) || 0;
+    console.log('[MiHorario/Drive] Comparando fechas -> local:', state.settings.lastModified||0, 'remoto:', remoteModified);
     if(remoteModified > (state.settings.lastModified||0)){
+      console.log('[MiHorario/Drive] El remoto es más reciente: mostrando aviso de actualización.');
       driveOfferRemoteUpdate(remoteData, onSafeToSync);
     } else {
       if((state.settings.lastModified||0) > remoteModified){
+        console.log('[MiHorario/Drive] El local es más reciente: subiendo a Drive.');
         await driveUpload(token, remote.id, state);
         localStorage.setItem('driveLastSync', String(Date.now()));
+      } else {
+        console.log('[MiHorario/Drive] Están igual, nada que hacer.');
       }
       if(onSafeToSync) onSafeToSync();
     }
   }catch(e){
     // La sesión de Google probablemente ha caducado en este dispositivo: lo marcamos
     // para que se muestre un aviso, pero no interrumpimos con una ventana emergente.
+    console.log('[MiHorario/Drive] Fallo durante la comprobación:', e && e.message);
     localStorage.setItem('driveNeedsReconnect','1');
     if(onSafeToSync) onSafeToSync(); // sin conexión: seguimos con lo único que tenemos, lo local
   }
