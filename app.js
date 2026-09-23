@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-80';
+const APP_VERSION = '2026-08-22-82';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -555,6 +555,7 @@ function openSubjectDetailModal(subjectId){
           <span class="student-list-num">${idx+1}</span>
           <div class="student-avatar" data-photo-for="${s.id}" data-edit-photo="${s.id}" title="Toca para añadir/cambiar foto">${escapeHtml((s.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
           <span class="student-list-name">${escapeHtml(s.name)}</span>
+          <span title="${s.dossierPaid?'Dossier pagado':'Dossier sin pagar'}" style="font-size:15px;flex-shrink:0;">${s.dossierPaid?'💰':'<span style=\"opacity:.25;\">💰</span>'}</span>
           <button data-edit-student="${s.id}" aria-label="Editar nombre" class="student-list-del" style="color:var(--ink-soft);">${ICONS.pencil}</button>
           <button data-del-student="${s.id}" aria-label="Eliminar" class="student-list-del">${ICONS.x}</button>
         </div>
@@ -718,6 +719,13 @@ function openEditStudentNameModal(studentId, subjectId){
     <button class="btn btn-primary" id="fStudentSave">${ICONS.pencil} Guardar</button>
 
     <div style="height:1px;background:var(--line);margin:18px 0 14px;"></div>
+    <label style="font-size:13px;font-weight:700;color:var(--ink-soft);">Dossier</label>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
+      <span style="font-size:13px;color:var(--ink);">${student.dossierPaid ? '✅ Pagado' : '❌ No pagado'}</span>
+      <button class="btn btn-ghost" id="fToggleDossier" style="padding:8px 14px;">${student.dossierPaid ? 'Marcar como no pagado' : 'Marcar como pagado'}</button>
+    </div>
+
+    <div style="height:1px;background:var(--line);margin:18px 0 14px;"></div>
     <label style="font-size:13px;font-weight:700;color:var(--ink-soft);">Periodos de E (interno, no se envía a iEduca)</label>
     <div id="exemptPeriodsList" style="margin:10px 0;">
       ${periods.length ? periods.map(p=>`
@@ -744,6 +752,11 @@ function openEditStudentNameModal(studentId, subjectId){
     saveState(); render(); closeModal(); openSubjectDetailModal(subjectId); toast('Nombre actualizado');
   };
   [inpSur, inpName].forEach(el=> el.addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('fStudentSave').click(); }));
+  document.getElementById('fToggleDossier').onclick=()=>{
+    student.dossierPaid = !student.dossierPaid;
+    saveState();
+    openEditStudentNameModal(studentId, subjectId);
+  };
   document.getElementById('fExemptAdd').onclick=()=>{
     const start = document.getElementById('fExemptStart').value;
     const end = document.getElementById('fExemptEnd').value;
@@ -1679,6 +1692,7 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
         <div class="dr-student-avatar-lg" data-photo-for="${student.id}" data-view-photo="${student.id}" title="Toca para ver la foto en grande">${escapeHtml((student.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
         <div class="dr-student-name"><span class="dr-student-num">${idx+1}</span>${escapeHtml(student.name)}</div>
         <div class="dr-student-pos">${idx+1} / ${roster.length} · ${escapeHtml(subj.name)} · ${dateLabel}</div>
+        <div style="font-size:10.5px;font-weight:800;letter-spacing:.03em;margin-top:2px;color:${student.dossierPaid?'#1a9e5c':'#d64545'};">${student.dossierPaid?'PAGADO':'NO PAGADO'}</div>
       </div>
       <button class="dr-nav-btn dr-student-arrow" id="drNextStudent" ${idx===roster.length-1?'disabled style="opacity:.3;"':''}>${ICONS.chevR}</button>
     </div>
