@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-78';
+const APP_VERSION = '2026-08-22-80';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -685,14 +685,30 @@ function openAddStudentModal(subjectId){
 /* Editar el nombre de un alumno ya existente. Como las observaciones, faltas, fotos, etc.
    están ligadas al alumno por su id interno (no por el nombre), corregir el nombre no
    afecta a nada de lo que ya se hubiera guardado con él. */
+/* Comprueba si un alumno tiene un periodo de E (interno de Mi Horario) activo en
+   una fecha dada. Un periodo sin fecha de fin significa "todo el curso". */
+function isStudentExemptOn(student, dateIso){
+  return (student.exemptPeriods||[]).some(p=> dateIso>=p.start && (!p.end || dateIso<=p.end));
+}
+function addExemptPeriod(student, start, end){
+  if(!student.exemptPeriods) student.exemptPeriods = [];
+  student.exemptPeriods.push({ id:uid(), start, end: end||null });
+  saveState();
+}
+function removeExemptPeriod(student, periodId){
+  student.exemptPeriods = (student.exemptPeriods||[]).filter(p=>p.id!==periodId);
+  saveState();
+}
+
 function openEditStudentNameModal(studentId, subjectId){
   const student = state.students.find(s=>s.id===studentId);
   if(!student) return;
   const parts = student.name.split(',');
   const currentSurname = (parts[0]||'').trim();
   const currentFirstname = (parts[1]||'').trim();
+  const periods = student.exemptPeriods||[];
   openModal(`
-    <div class="modal-head"><div class="modal-title">Editar nombre</div>
+    <div class="modal-head"><div class="modal-title">Ficha del alumno</div>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
     <div class="row2">
       <div class="field"><label>Apellidos</label><input type="text" id="fStudentSurname" value="${escapeHtml(currentSurname)}"></div>
@@ -700,6 +716,22 @@ function openEditStudentNameModal(studentId, subjectId){
     </div>
     <p style="font-size:11.5px;color:var(--ink-faint);margin-top:-8px;">Las observaciones, faltas, deberes y fotos ya guardados se mantienen, solo cambia el nombre.</p>
     <button class="btn btn-primary" id="fStudentSave">${ICONS.pencil} Guardar</button>
+
+    <div style="height:1px;background:var(--line);margin:18px 0 14px;"></div>
+    <label style="font-size:13px;font-weight:700;color:var(--ink-soft);">Periodos de E (interno, no se envía a iEduca)</label>
+    <div id="exemptPeriodsList" style="margin:10px 0;">
+      ${periods.length ? periods.map(p=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;">
+          <span>${dateLabel(p.start)} ${p.end?'– '+dateLabel(p.end):'– todo el curso'}</span>
+          <button data-remove-exempt="${p.id}" class="student-list-del" aria-label="Quitar">${ICONS.x}</button>
+        </div>
+      `).join('') : `<div style="font-size:12.5px;color:var(--ink-faint);">Sin periodos de E puestos.</div>`}
+    </div>
+    <div class="row2" style="margin-bottom:8px;">
+      <div class="field"><label>Desde</label><input type="date" id="fExemptStart" value="${todayISO()}"></div>
+      <div class="field"><label>Hasta (vacío = todo el curso)</label><input type="date" id="fExemptEnd"></div>
+    </div>
+    <button class="btn btn-ghost" id="fExemptAdd">${ICONS.pencil} Añadir periodo de E</button>
   `);
   const inpSur = document.getElementById('fStudentSurname');
   const inpName = document.getElementById('fStudentFirstname');
@@ -712,6 +744,17 @@ function openEditStudentNameModal(studentId, subjectId){
     saveState(); render(); closeModal(); openSubjectDetailModal(subjectId); toast('Nombre actualizado');
   };
   [inpSur, inpName].forEach(el=> el.addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('fStudentSave').click(); }));
+  document.getElementById('fExemptAdd').onclick=()=>{
+    const start = document.getElementById('fExemptStart').value;
+    const end = document.getElementById('fExemptEnd').value;
+    if(!start){ toast('Indica desde cuándo'); return; }
+    if(end && end<start){ toast('La fecha de fin no puede ser anterior a la de inicio'); return; }
+    addExemptPeriod(student, start, end);
+    openEditStudentNameModal(studentId, subjectId);
+  };
+  document.querySelectorAll('[data-remove-exempt]').forEach(el=>{
+    el.onclick=()=>{ removeExemptPeriod(student, el.dataset.removeExempt); openEditStudentNameModal(studentId, subjectId); };
+  });
 }
 
 function splitCsvLine(line){
@@ -1521,6 +1564,7 @@ async function pasteDayFromIeduca(subjectId, dateIso){
       if(st.codes.includes('F')) changes.push('Falta');
       if(st.codes.includes('R')) changes.push('Retraso');
       if(st.codes.includes('m')) changes.push('Material');
+      if(st.codes.includes('E')) changes.push('E (Exempt/Expulsió en iEduca)');
       if(st.codes.includes('C') && (!rec || !rec.actitud || rec.actitud==='CC')) changes.push('Actitud CC');
       if(st.codes.includes('D') && (!rec || rec.deures==null || rec.deures===0)) changes.push('Deures=0');
       if(st.obsText && (!rec || !rec.actitudNota || !rec.actitudNota.trim())) changes.push('Nota: "'+(st.obsText.length>50?st.obsText.slice(0,50)+'…':st.obsText)+'"');
@@ -1552,9 +1596,9 @@ async function pasteDayFromIeduca(subjectId, dateIso){
       if(!p.matched || p.conflict) return;
       let rec = state.records.find(r=>r.studentId===p.matched.id && r.date===dateIso);
       if(!rec){ rec = { id:uid(), studentId:p.matched.id, date:dateIso, assistencia:[], actitud:null, actitudNota:'', deures:null, participacio:null, gestio:null }; state.records.push(rec); }
-      // F/R/m se sincronizan tal cual (sin tocar J/E, que son solo de Mi Horario)
-      rec.assistencia = (rec.assistencia||[]).filter(a=>a!=='F'&&a!=='R'&&a!=='m');
-      ['F','R','m'].forEach(c=>{ if(p.codes.includes(c)) rec.assistencia.push(c); });
+      // F/R/m/E se sincronizan tal cual (sin tocar J, que es solo de Mi Horario)
+      rec.assistencia = (rec.assistencia||[]).filter(a=>a!=='F'&&a!=='R'&&a!=='m'&&a!=='E');
+      ['F','R','m','E'].forEach(c=>{ if(p.codes.includes(c)) rec.assistencia.push(c); });
       if(p.codes.includes('C') && (!rec.actitud || rec.actitud==='CC')) rec.actitud = 'CC';
       if(p.codes.includes('D') && (rec.deures==null || rec.deures===0)) rec.deures = 0;
       if(p.obsText && (!rec.actitudNota || !rec.actitudNota.trim())) rec.actitudNota = p.obsText;
@@ -1598,6 +1642,7 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
   const rec = getOrCreateRecord(student.id, dateIso);
   const subjIdx = allSubjects.findIndex(s=>s.id===subjectId);
   const dateLabel = capitalize(parseISO(dateIso).toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'short'}));
+  const isExempt = isStudentExemptOn(student, dateIso);
 
   const chipRow = (id, options, current, multi)=> `<div class="dr-chips" id="${id}">${options.map(o=>{
     const val = typeof o==='object' ? o.v : o;
@@ -1640,7 +1685,7 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
 
     <div class="dr-field">
       <label>Assistència</label>
-      ${chipRow('drAssist', ['F','R','J','E','m'], rec.assistencia, true)}
+      ${chipRow('drAssist', ['F','R','J','E','m'], (isExempt && !rec.assistencia.includes('E')) ? [...rec.assistencia,'E'] : rec.assistencia, true)}
     </div>
     <div class="dr-field">
       <label>Actitud</label>
@@ -1653,11 +1698,11 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
     </div>
     <div class="dr-field">
       <label>Participació</label>
-      ${chipRow('drPart', ['0','1','2'], rec.participacio==null?'':String(rec.participacio), false)}
+      ${chipRow('drPart', ['0','1','2'], isExempt ? '0' : (rec.participacio==null?'':String(rec.participacio)), false)}
     </div>
     <div class="dr-field">
       <label>Gestió</label>
-      ${chipRow('drGestio', ['0','1','2'], rec.gestio==null?'':String(rec.gestio), false)}
+      ${chipRow('drGestio', ['0','1','2'], isExempt ? '0' : (rec.gestio==null?'':String(rec.gestio)), false)}
     </div>
   `);
 
@@ -3130,7 +3175,7 @@ function applyDefaultGestion(){
         const rec = state.records.find(r=>r.studentId===s.id && r.date===d);
         if(!rec || rec.gestio==null){
           const r2 = getOrCreateRecord(s.id, d);
-          const hasFJE = (r2.assistencia||[]).some(a=>a==='F'||a==='J'||a==='E');
+          const hasFJE = (r2.assistencia||[]).some(a=>a==='F'||a==='J'||a==='E') || isStudentExemptOn(s, d);
           r2.gestio = hasFJE ? 0 : 2;
           persistRecord(r2);
           changed++;
