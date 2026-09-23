@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-76';
+const APP_VERSION = '2026-08-22-78';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -90,6 +90,13 @@ function saveState(){
   state.settings.lastModified = Date.now();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   scheduleDriveUpload();
+}
+/* Para cambios puramente internos y de poca importancia (como qué avisos ya se han
+   mostrado), que no merece la pena que decidan cuál de los dispositivos tiene "la
+   copia más reciente" al sincronizar. Se guarda en este aparato, pero no se toca la
+   marca de sincronización ni se sube nada a Drive por este cambio. */
+function saveStateLocalOnly(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
@@ -3151,10 +3158,12 @@ function checkReminders(){
       changed = true;
     }
   });
-  // Solo se guarda (y por tanto solo se "envejece" la marca de última modificación
-  // usada para la sincronización) si de verdad ha habido algún aviso nuevo, nunca
-  // solo por tener la app abierta sin haber cambiado nada.
-  if(changed) saveState();
+  // Solo se guarda si de verdad ha habido algún aviso nuevo, nunca solo por tener la
+  // app abierta sin haber cambiado nada. Se guarda con saveStateLocalOnly (no
+  // saveState): qué avisos ya se han mostrado es un detalle interno sin importancia,
+  // que no debería hacer que este dispositivo parezca "más reciente" que otro a la
+  // hora de sincronizar y arriesgarse a sobrescribir cambios de verdad hechos en otro.
+  if(changed) saveStateLocalOnly();
 }
 
 /* ==================================================================
@@ -3394,7 +3403,9 @@ async function driveCheckOnLoad(onSafeToSync){
       driveOfferRemoteUpdate(remoteData, onSafeToSync);
     } else {
       if((state.settings.lastModified||0) > remoteModified){
-        console.log('[MiHorario/Drive] El local es más reciente: subiendo a Drive.');
+        console.log('[MiHorario/Drive] El local es más reciente: guardando copia de seguridad de lo que hay en Drive antes de sobrescribir, y subiendo.');
+        try{ await driveUpload(token, null, remoteData, 'mi-horario-backup-auto-'+Date.now()+'.json'); }
+        catch(e){ console.log('[MiHorario/Drive] No se pudo guardar la copia de seguridad (se sube igualmente):', e.message); }
         await driveUpload(token, remote.id, state);
         localStorage.setItem('driveLastSync', String(Date.now()));
       } else {
@@ -3403,11 +3414,15 @@ async function driveCheckOnLoad(onSafeToSync){
       if(onSafeToSync) onSafeToSync();
     }
   }catch(e){
-    // La sesión de Google probablemente ha caducado en este dispositivo: lo marcamos
-    // para que se muestre un aviso, pero no interrumpimos con una ventana emergente.
-    console.log('[MiHorario/Drive] Fallo durante la comprobación:', e && e.message);
+    // La sesión de Google probablemente ha caducado en este dispositivo, o no hay
+    // conexión ahora mismo: lo marcamos para que se muestre un aviso. A diferencia
+    // de los demás casos, aquí NO llamamos a onSafeToSync -- no sabemos si esta
+    // copia local está al día o no, así que es más seguro no crear datos nuevos
+    // (como los de "Gestión por defecto") sobre una base que podría estar
+    // desactualizada, evitando que después parezca "más reciente" sin serlo de
+    // verdad y sobrescriba cambios hechos en otro dispositivo mientras tanto.
+    console.log('[MiHorario/Drive] Fallo durante la comprobación (no se ejecutan tareas automáticas esta vez):', e && e.message);
     localStorage.setItem('driveNeedsReconnect','1');
-    if(onSafeToSync) onSafeToSync(); // sin conexión: seguimos con lo único que tenemos, lo local
   }
   renderDriveHint(); // aviso siempre visible, sin recargar el contenido de la pestaña actual
 }
