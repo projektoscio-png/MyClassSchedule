@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-85';
+const APP_VERSION = '2026-08-22-86';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -729,9 +729,10 @@ function openEditStudentNameModal(studentId, subjectId){
     <div style="height:1px;background:var(--line);margin:18px 0 14px;"></div>
     <label style="font-size:13px;font-weight:700;color:var(--ink-soft);">Dossier</label>
     <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
-      <span style="font-size:13px;color:var(--ink);">${student.dossierPaid ? '✅ Pagado' : '❌ No pagado'}</span>
-      <button class="btn btn-ghost" id="fToggleDossier" style="padding:8px 14px;">${student.dossierPaid ? 'Marcar como no pagado' : 'Marcar como pagado'}</button>
+      <span style="font-size:13px;color:var(--ink);">${student.motxilla ? '🎒 Motxilla (no paga)' : (student.dossierPaid ? '✅ Pagado' : '❌ No pagado')}</span>
+      ${!student.motxilla ? `<button class="btn btn-ghost" id="fToggleDossier" style="padding:8px 14px;">${student.dossierPaid ? 'Marcar como no pagado' : 'Marcar como pagado'}</button>` : ''}
     </div>
+    <button class="btn btn-ghost" id="fToggleMotxilla" style="padding:8px 14px;margin-top:8px;">${student.motxilla ? 'Quitar Motxilla' : '🎒 Marcar como Motxilla (no paga)'}</button>
 
     <div style="height:1px;background:var(--line);margin:18px 0 14px;"></div>
     <label style="font-size:13px;font-weight:700;color:var(--ink-soft);">Periodos de E (interno, no se envía a iEduca)</label>
@@ -764,8 +765,14 @@ function openEditStudentNameModal(studentId, subjectId){
   if(fStudentPrev) fStudentPrev.onclick=()=>{ if(idx>0) openEditStudentNameModal(roster[idx-1].id, subjectId); };
   const fStudentNext = document.getElementById('fStudentNext');
   if(fStudentNext) fStudentNext.onclick=()=>{ if(idx<roster.length-1) openEditStudentNameModal(roster[idx+1].id, subjectId); };
-  document.getElementById('fToggleDossier').onclick=()=>{
+  const fToggleDossier = document.getElementById('fToggleDossier');
+  if(fToggleDossier) fToggleDossier.onclick=()=>{
     student.dossierPaid = !student.dossierPaid;
+    saveState();
+    openEditStudentNameModal(studentId, subjectId);
+  };
+  document.getElementById('fToggleMotxilla').onclick=()=>{
+    student.motxilla = !student.motxilla;
     saveState();
     openEditStudentNameModal(studentId, subjectId);
   };
@@ -1651,8 +1658,9 @@ async function pasteDossierFromIeduca(){
     let best = null, bestScore = 0;
     allStudents.forEach(s=>{ const sc = nameMatchScore(st.name, s.name); if(sc>bestScore){ bestScore=sc; best=s; } });
     const matched = (best && bestScore>=0.5) ? best : null;
-    const changes = matched && matched.dossierPaid !== st.paid;
-    return { ieducaName: st.name, matched, paid: st.paid, changes };
+    const motxilla = !!st.motxilla;
+    const changes = matched && (matched.dossierPaid !== st.paid || !!matched.motxilla !== motxilla);
+    return { ieducaName: st.name, matched, paid: st.paid, motxilla, changes };
   });
 
   const changesCount = plan.filter(p=>p.matched && p.changes).length;
@@ -1660,7 +1668,7 @@ async function pasteDossierFromIeduca(){
   const rows = plan.filter(p=>p.matched && p.changes).map(p=>`
     <div class="card" style="padding:9px 12px;margin-bottom:6px;display:flex;justify-content:space-between;">
       <b style="font-size:13px;">${escapeHtml(p.matched.name)}</b>
-      <span style="font-size:12.5px;font-weight:700;color:${p.paid?'#1a9e5c':'#d64545'};">${p.paid?'PAGADO':'NO PAGADO'}</span>
+      <span style="font-size:12.5px;font-weight:700;color:${p.motxilla?'#2a6fa8':(p.paid?'#1a9e5c':'#d64545')};">${p.motxilla?'🎒 MOTXILLA':(p.paid?'PAGADO':'NO PAGADO')}</span>
     </div>`).join('');
 
   openModal(`
@@ -1674,7 +1682,7 @@ async function pasteDossierFromIeduca(){
   if(btn) btn.onclick=()=>{
     let applied = 0;
     plan.forEach(p=>{
-      if(p.matched && p.changes){ p.matched.dossierPaid = p.paid; applied++; }
+      if(p.matched && p.changes){ p.matched.dossierPaid = p.paid; p.matched.motxilla = p.motxilla; applied++; }
     });
     saveState(); render(); closeModal();
     toast(`Actualizado el pago de ${applied} alumno(s)`);
@@ -1751,7 +1759,7 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
         <div class="dr-student-avatar-lg" data-photo-for="${student.id}" data-view-photo="${student.id}" title="Toca para ver la foto en grande">${escapeHtml((student.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
         <div class="dr-student-name"><span class="dr-student-num">${idx+1}</span>${escapeHtml(student.name)}</div>
         <div class="dr-student-pos">${idx+1} / ${roster.length} · ${escapeHtml(subj.name)} · ${dateLabel}</div>
-        <div style="font-size:10.5px;font-weight:800;letter-spacing:.03em;margin-top:2px;color:${student.dossierPaid?'#1a9e5c':'#d64545'};">${student.dossierPaid?'PAGADO':'NO PAGADO'}</div>
+        <div style="font-size:10.5px;font-weight:800;letter-spacing:.03em;margin-top:2px;color:${student.motxilla?'#2a6fa8':(student.dossierPaid?'#1a9e5c':'#d64545')};">${student.motxilla?'MOTXILLA':(student.dossierPaid?'PAGADO':'NO PAGADO')}</div>
       </div>
       <button class="dr-nav-btn dr-student-arrow" id="drNextStudent" ${idx===roster.length-1?'disabled style="opacity:.3;"':''}>${ICONS.chevR}</button>
     </div>

@@ -30,7 +30,9 @@
         const b = pagamentSpan.querySelector('b');
         if(b) status = b.textContent.trim();
       }
-      return { name, group, status, paid: status==='Pagat' };
+      // Los alumnos con la etiqueta "Motxilla" no tienen que pagar el dossier.
+      const motxilla = Array.from(tr.querySelectorAll('.etiqueta-div .taggle_text')).some(t=>t.textContent.trim().toLowerCase()==='motxilla');
+      return { name, group, status, paid: status==='Pagat', motxilla };
     }).filter(s=>s.name);
   }
 
@@ -94,13 +96,13 @@
       const color = s.status==='Pagat' ? '#2a6f4b' : (s.status==='Rebutjat' ? '#c0392b' : (s.status==='Pendent' ? '#b8860b' : '#999'));
       return `<div style="padding:5px 0;border-bottom:1px solid #eee;font-size:12.5px;display:flex;justify-content:space-between;">
         <span>${escapeHtml(s.name)} <span style="color:#aaa;">· ${escapeHtml(s.group)}</span></span>
-        <b style="color:${color};">${escapeHtml(s.status||'—')}</b>
+        <b style="color:${color};">${s.motxilla?'🎒 Motxilla':escapeHtml(s.status||'—')}</b>
       </div>`;
     }).join('')}
   `;
 
   copyBtn.onclick = async ()=>{
-    const payload = { app:'MiHorario', mode:'dossier', students: allStudents.map(s=>({ name:s.name, paid:s.paid })) };
+    const payload = { app:'MiHorario', mode:'dossier', students: allStudents.map(s=>({ name:s.name, paid:s.paid, motxilla:s.motxilla })) };
     try{
       await navigator.clipboard.writeText(JSON.stringify(payload));
       document.getElementById('mihorario-ieduca-result').textContent = `Copiado (${payload.students.length} alumno(s)). Ve a Mi Horario y pulsa "Pegar pagos desde iEduca".`;
