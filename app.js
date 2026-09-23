@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-75';
+const APP_VERSION = '2026-08-22-76';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -3237,21 +3237,37 @@ async function driveGetToken(silent){
   }
 }
 
+/* A veces el token guardado en caché PARECE que no ha caducado todavía (según el
+   reloj de la propia app), pero Google ya lo ha invalidado de verdad (por ejemplo,
+   al cerrar sesión y volver a entrar). Esta función hace la petición, y si Google
+   responde 401, pide un token nuevo de verdad (sin usar la caché) y reintenta una
+   sola vez antes de rendirse. */
+async function driveFetchWithRetry(url, options){
+  options = options || {};
+  const doFetch = ()=> fetch(url, { ...options, headers: { ...(options.headers||{}), Authorization: `Bearer ${driveAccessToken}` } });
+  let res = await doFetch();
+  if(res.status === 401){
+    console.log('[MiHorario/Drive] El token en caché ha resultado inválido (401): pidiendo uno nuevo de verdad.');
+    driveAccessToken = null;
+    localStorage.removeItem('driveAccessTokenCache');
+    localStorage.removeItem('driveTokenExpiryCache');
+    await driveGetToken(true);
+    res = await doFetch();
+  }
+  return res;
+}
+
 async function driveFindFile(token, fileName){
   fileName = fileName || DRIVE_FILE_NAME;
   const q = encodeURIComponent(`name='${fileName}' and trashed=false`);
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,modifiedTime)`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
+  const res = await driveFetchWithRetry(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,modifiedTime)`);
   if(!res.ok) throw new Error('No se pudo consultar Google Drive');
   const data = await res.json();
   return (data.files && data.files[0]) || null;
 }
 
 async function driveDownload(token, fileId){
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
+  const res = await driveFetchWithRetry(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
   if(!res.ok) throw new Error('No se pudo descargar la copia de Drive');
   return res.json();
 }
@@ -3260,9 +3276,9 @@ async function driveUpload(token, fileId, payload, fileName){
   fileName = fileName || DRIVE_FILE_NAME;
   const body = JSON.stringify(payload);
   if(fileId){
-    const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+    const res = await driveFetchWithRetry(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
       method:'PATCH',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type':'application/json' },
+      headers: { 'Content-Type':'application/json' },
       body
     });
     if(!res.ok) throw new Error('No se pudo actualizar la copia en Drive');
@@ -3273,9 +3289,9 @@ async function driveUpload(token, fileId, payload, fileName){
     const multipartBody =
       `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
       `--${boundary}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${boundary}--`;
-    const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    const res = await driveFetchWithRetry('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
       method:'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
+      headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
       body: multipartBody
     });
     if(!res.ok) throw new Error('No se pudo crear la copia en Drive');
@@ -3441,7 +3457,7 @@ async function calendarFindEventForSlot(token, calendarId, dateIso, startTime, e
   const timeMax = dayEnd.toISOString();
   const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`
     + `?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const res = await driveFetchWithRetry(url);
   if(!res.ok){
     if(res.status===404) throw new Error('No se encontró ese calendario. Revisa el ID.');
     if(res.status===403) throw new Error('Sin permiso para acceder a ese calendario.');
@@ -3463,9 +3479,9 @@ async function calendarFindEventForSlot(token, calendarId, dateIso, startTime, e
 
 async function calendarUpdateEventDescription(token, calendarId, eventId, description){
   const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${eventId}`;
-  const res = await fetch(url, {
+  const res = await driveFetchWithRetry(url, {
     method:'PATCH',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type':'application/json' },
+    headers: { 'Content-Type':'application/json' },
     body: JSON.stringify({ description })
   });
   if(!res.ok) throw new Error('No se pudo actualizar el evento del calendario');
@@ -3552,7 +3568,7 @@ async function syncDeberesBidirectional(subjectId, from, to, opts){
     const timeMax = dayTo.toISOString();
     const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(subj.calendarId)}/events`
       + `?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime&maxResults=2500`;
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await driveFetchWithRetry(url);
     if(!res.ok) throw new Error('No se pudo leer el calendario');
     const data = await res.json();
     events = (data.items||[]).filter(ev=>ev.start && ev.start.dateTime);
