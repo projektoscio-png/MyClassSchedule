@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-84';
+const APP_VERSION = '2026-08-22-85';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -15,6 +15,7 @@ const IEDUCA_SITE_BASE = 'https://projektoscio-png.github.io/MyClassSchedule';
 const IEDUCA_BOOKMARKLETS = {
   volcar: `javascript:(function(){var s=document.createElement('script');s.src='${IEDUCA_SITE_BASE}/ieduca-bookmarklet.js?t='+Date.now();document.body.appendChild(s);})();`,
   leer: `javascript:(function(){var s=document.createElement('script');s.src='${IEDUCA_SITE_BASE}/ieduca-bookmarklet-leer.js?t='+Date.now();document.body.appendChild(s);})();`,
+  pagos: `javascript:(function(){var s=document.createElement('script');s.src='${IEDUCA_SITE_BASE}/ieduca-bookmarklet-pagos.js?t='+Date.now();document.body.appendChild(s);})();`,
 };
 /* Devuelve un color de texto legible (oscuro o blanco) según lo clara u oscura que sea la
    asignatura, para poder pintar el calendario con el color elegido directamente, sin diluirlo. */
@@ -1633,6 +1634,53 @@ async function pasteDayFromIeduca(subjectId, dateIso){
   };
 }
 
+/* Trae de vuelta lo que el marcador "Leer pagos de iEduca" copió: una lista de
+   TODOS los alumnos de TODOS los cursos con su estado de pago. Se emparejan por
+   nombre contra los alumnos de Mi Horario (de cualquier asignatura, ya que la
+   lista de iEduca mezcla todos los cursos), y se muestra el plan antes de aplicar. */
+async function pasteDossierFromIeduca(){
+  let raw;
+  try{ raw = await navigator.clipboard.readText(); }
+  catch(e){ toast('No se pudo leer el portapapeles. Revisa los permisos del navegador.'); return; }
+  let payload;
+  try{ payload = JSON.parse(raw); if(payload.app!=='MiHorario' || payload.mode!=='dossier') throw 0; }
+  catch(e){ toast('No hay ningún dato copiado desde el marcador "Leer pagos de iEduca". Cópialo primero allí.'); return; }
+
+  const allStudents = state.students;
+  const plan = payload.students.map(st=>{
+    let best = null, bestScore = 0;
+    allStudents.forEach(s=>{ const sc = nameMatchScore(st.name, s.name); if(sc>bestScore){ bestScore=sc; best=s; } });
+    const matched = (best && bestScore>=0.5) ? best : null;
+    const changes = matched && matched.dossierPaid !== st.paid;
+    return { ieducaName: st.name, matched, paid: st.paid, changes };
+  });
+
+  const changesCount = plan.filter(p=>p.matched && p.changes).length;
+  const unmatchedCount = plan.filter(p=>!p.matched).length;
+  const rows = plan.filter(p=>p.matched && p.changes).map(p=>`
+    <div class="card" style="padding:9px 12px;margin-bottom:6px;display:flex;justify-content:space-between;">
+      <b style="font-size:13px;">${escapeHtml(p.matched.name)}</b>
+      <span style="font-size:12.5px;font-weight:700;color:${p.paid?'#1a9e5c':'#d64545'};">${p.paid?'PAGADO':'NO PAGADO'}</span>
+    </div>`).join('');
+
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Pegar pagos desde iEduca</div>
+      <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+    <p style="font-size:13px;color:var(--ink-soft);margin-bottom:6px;">${payload.students.length} alumno(s) leídos. <b>${changesCount}</b> cambiarán de estado.${unmatchedCount?` ${unmatchedCount} no se han encontrado en Mi Horario (no se tocan).`:''}</p>
+    <div style="max-height:50vh;overflow-y:auto;">${rows || '<div style="font-size:13px;color:var(--ink-faint);">No hay ningún cambio que aplicar.</div>'}</div>
+    ${changesCount ? `<button class="btn btn-primary" id="dossierPasteApply" style="margin-top:10px;">Aplicar ${changesCount} cambio(s)</button>` : ''}
+  `);
+  const btn = document.getElementById('dossierPasteApply');
+  if(btn) btn.onclick=()=>{
+    let applied = 0;
+    plan.forEach(p=>{
+      if(p.matched && p.changes){ p.matched.dossierPaid = p.paid; applied++; }
+    });
+    saveState(); render(); closeModal();
+    toast(`Actualizado el pago de ${applied} alumno(s)`);
+  };
+}
+
 function exportDayXlsx(subjectId, dateIso){
   if(typeof XLSX==='undefined'){ toast('No se pudo cargar el generador de Excel. Revisa tu conexión.'); return; }
   const subj = getSubject(subjectId);
@@ -2074,6 +2122,11 @@ function renderHolidays(){
         <div style="font-size:12.5px;font-weight:700;color:var(--ink-soft);margin-bottom:4px;">Leer de iEduca</div>
         <code class="ieduca-bm-code" data-bm="leer" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--bg);padding:10px 12px;border-radius:8px;font-size:11px;cursor:pointer;">${escapeHtml(IEDUCA_BOOKMARKLETS.leer)}</code>
       </div>
+      <div>
+        <div style="font-size:12.5px;font-weight:700;color:var(--ink-soft);margin-bottom:4px;">Leer pagos de iEduca</div>
+        <code class="ieduca-bm-code" data-bm="pagos" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--bg);padding:10px 12px;border-radius:8px;font-size:11px;cursor:pointer;">${escapeHtml(IEDUCA_BOOKMARKLETS.pagos)}</code>
+        <button class="btn btn-ghost" id="ieducaPasteDossierBtn" style="margin-top:8px;">📥 Pegar pagos desde iEduca</button>
+      </div>
       ${(()=>{
         const subjects = [...state.subjects].sort((a,b)=>a.name.localeCompare(b.name,'es'));
         if(subjects.length===0) return '';
@@ -2305,6 +2358,11 @@ function bindContentEvents(){
     e.stopPropagation();
     if(!ui.ieducaCopyDay){ toast('Indica un día'); return; }
     pasteDayFromIeduca(ui.ieducaCopySubjectId, ui.ieducaCopyDay);
+  };
+  const ieducaPasteDossierBtn = document.getElementById('ieducaPasteDossierBtn');
+  if(ieducaPasteDossierBtn) ieducaPasteDossierBtn.onclick=(e)=>{
+    e.stopPropagation();
+    pasteDossierFromIeduca();
   };
   const btnReset = document.getElementById('btnReset');
   if(btnReset) btnReset.onclick = confirmReset;
