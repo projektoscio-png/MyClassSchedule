@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-88';
+const APP_VERSION = '2026-08-22-89';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -556,6 +556,7 @@ function openSubjectDetailModal(subjectId){
           <span class="student-list-num">${idx+1}</span>
           <div class="student-avatar" data-photo-for="${s.id}" data-edit-photo="${s.id}" title="Toca para añadir/cambiar foto">${escapeHtml((s.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
           <span class="student-list-name">${escapeHtml(s.name)}</span>
+          ${(s.dossierPaid || s.motxilla) && !s.dossierDelivered ? `<span title="Puede recibir el dossier, todavía no se le ha entregado" style="font-size:15px;flex-shrink:0;">📦</span>` : ''}
           ${s.motxilla ? `<span title="Motxilla (no paga)" style="font-size:15px;flex-shrink:0;">🎒</span>` : `<span title="${s.dossierPaid?'Dossier pagado':'Dossier sin pagar'}" style="font-size:15px;flex-shrink:0;">${s.dossierPaid?'💰':'<span style=\"opacity:.25;\">💰</span>'}</span>`}
           <button data-edit-student="${s.id}" aria-label="Editar nombre" class="student-list-del" style="color:var(--ink-soft);">${ICONS.pencil}</button>
           <button data-del-student="${s.id}" aria-label="Eliminar" class="student-list-del">${ICONS.x}</button>
@@ -734,6 +735,15 @@ function openEditStudentNameModal(studentId, subjectId){
     </div>
     <button class="btn btn-ghost" id="fToggleMotxilla" style="padding:8px 14px;margin-top:8px;">${student.motxilla ? 'Quitar Motxilla' : '🎒 Marcar como Motxilla (no paga)'}</button>
 
+    <div style="margin-top:14px;">
+      <label style="font-size:12px;color:var(--ink-soft);">Entrega del dossier</label>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+        <span style="font-size:13px;color:var(--ink);">${student.dossierDelivered ? '📦 Entregado' : '⏳ Pendiente de entregar'}</span>
+        ${(student.dossierPaid || student.motxilla) ? `<button class="btn btn-ghost" id="fToggleDelivered" style="padding:8px 14px;">${student.dossierDelivered ? 'Marcar como no entregado' : 'Marcar como entregado'}</button>` : ''}
+      </div>
+      ${(!student.dossierPaid && !student.motxilla) ? `<div style="font-size:11.5px;color:var(--ink-faint);margin-top:6px;">Todavía no se le puede entregar: no ha pagado ni tiene Motxilla.</div>` : ''}
+    </div>
+
     <div style="height:1px;background:var(--line);margin:18px 0 14px;"></div>
     <label style="font-size:13px;font-weight:700;color:var(--ink-soft);">Periodos de E (interno, no se envía a iEduca)</label>
     <div id="exemptPeriodsList" style="margin:10px 0;">
@@ -777,6 +787,12 @@ function openEditStudentNameModal(studentId, subjectId){
   };
   document.getElementById('fToggleMotxilla').onclick=()=>{
     student.motxilla = !student.motxilla;
+    saveState();
+    openEditStudentNameModal(studentId, subjectId);
+  };
+  const fToggleDelivered = document.getElementById('fToggleDelivered');
+  if(fToggleDelivered) fToggleDelivered.onclick=()=>{
+    student.dossierDelivered = !student.dossierDelivered;
     saveState();
     openEditStudentNameModal(studentId, subjectId);
   };
