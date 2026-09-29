@@ -45,12 +45,13 @@
   box.innerHTML = `
     <h2 style="margin:0 0 4px;font-size:18px;">Leyendo pagos de iEduca</h2>
     <p id="mihorario-ieduca-progress" style="font-size:13px;color:#555;margin:0 0 14px;">Leyendo la página actual...</p>
-    <div id="mihorario-ieduca-list"></div>
-    <div style="margin-top:16px;display:flex;gap:10px;">
+    <div style="display:flex;gap:10px;">
       <button id="mihorario-ieduca-copy" style="flex:1;padding:11px;border:none;border-radius:8px;background:#2a6f4b;color:#fff;font-weight:700;cursor:pointer;" disabled>Copiar</button>
+      <button id="mihorario-ieduca-csv" style="padding:11px 14px;border:1px solid #2a6f4b;border-radius:8px;background:#fff;color:#2a6f4b;font-weight:700;cursor:pointer;white-space:nowrap;" disabled>Descargar CSV</button>
       <button id="mihorario-ieduca-cancel" style="padding:11px 16px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer;">Cerrar</button>
     </div>
-    <div id="mihorario-ieduca-result" style="margin-top:14px;font-size:13px;"></div>
+    <div id="mihorario-ieduca-result" style="margin:10px 0 14px;font-size:13px;"></div>
+    <div id="mihorario-ieduca-list"></div>
   `;
   overlay.appendChild(box);
   document.body.appendChild(overlay);
@@ -59,6 +60,7 @@
   const progressEl = document.getElementById('mihorario-ieduca-progress');
   const listEl = document.getElementById('mihorario-ieduca-list');
   const copyBtn = document.getElementById('mihorario-ieduca-copy');
+  const csvBtn = document.getElementById('mihorario-ieduca-csv');
 
   // Página actual (la que ya tenemos delante, sin necesidad de pedirla)
   let allStudents = extractStudentsFromDoc(document);
@@ -88,6 +90,7 @@
 
   progressEl.textContent = `Lectura completa: ${allStudents.length} alumno(s) en total.`;
   copyBtn.disabled = false;
+  csvBtn.disabled = false;
 
   const counts = allStudents.reduce((acc,s)=>{ acc[s.status||'(sin estado)'] = (acc[s.status||'(sin estado)']||0)+1; return acc; }, {});
   listEl.innerHTML = `
@@ -109,6 +112,27 @@
     }catch(e){
       document.getElementById('mihorario-ieduca-result').textContent = 'No se pudo copiar automáticamente.';
     }
+  };
+  csvBtn.onclick = ()=>{
+    const csvEscape = (v)=>{
+      const s = String(v==null?'':v);
+      return /[",\n;]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+    };
+    const header = ['Nombre','Grupo','Estado','Motxilla'];
+    const lines = [header.join(';')].concat(allStudents.map(s=>[
+      csvEscape(s.name), csvEscape(s.group), csvEscape(s.status||''), s.motxilla?'Sí':'No'
+    ].join(';')));
+    const csv = '\uFEFF' + lines.join('\r\n'); // BOM para que Excel abra bien los acentos
+    const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'pagos-dossier-ieduca.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 5000);
+    document.getElementById('mihorario-ieduca-result').textContent = `Descargado pagos-dossier-ieduca.csv (${allStudents.length} alumno(s)).`;
   };
 
 })();
