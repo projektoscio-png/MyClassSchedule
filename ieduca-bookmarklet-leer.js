@@ -98,7 +98,7 @@
     if(plainCode){
       codes.push(plainCode);
     } else {
-      ['F','R','m','C'].forEach(letter=>{
+      ['F','R','m','C','D'].forEach(letter=>{
         const btn = findLetterButton(d.id_per, letter);
         if(btn && btn.hasAttribute('checked')) codes.push(letter);
       });
