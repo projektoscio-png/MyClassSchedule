@@ -70,14 +70,19 @@
 
     const blocks = Array.from(doc.querySelectorAll('.observacio-bloc'));
     if(blocks.length === 0) return '';
-    const relevant = (hora || data)
-      ? blocks.filter(b=>{
-          const info = (b.querySelector('.observacio-bloc-info')?.textContent||'').replace(/\s+/g,'');
-          const horaOk = !hora || info.includes(hora);
-          const dataOk = !data || info.includes(data);
-          return horaOk && dataOk;
-        })
-      : blocks; // si no se pudo leer ni la fecha ni la hora de referencia, mejor no perder nada
+    if(!hora && !data){
+      // No se ha podido confirmar ni el día ni la hora de esta sesión (por ejemplo,
+      // cuando el alumno está de falta justificada ese día y la ventana no muestra el
+      // mismo título de referencia). Mejor no traer ninguna observación que arriesgarnos
+      // a coger la de otro día por error.
+      return '';
+    }
+    const relevant = blocks.filter(b=>{
+      const info = (b.querySelector('.observacio-bloc-info')?.textContent||'').replace(/\s+/g,'');
+      const horaOk = !hora || info.includes(hora);
+      const dataOk = !data || info.includes(data);
+      return horaOk && dataOk;
+    });
     return relevant.map(b=>(b.querySelector('.observacio-bloc-text')?.textContent||'').trim()).filter(Boolean).join('\n');
   }
 
