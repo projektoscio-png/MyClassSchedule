@@ -55,23 +55,29 @@
     return withDate || matches[0] || null;
   }
   function extractObsText(doc){
-    // Esta ventana lista TODAS las observaciones de ese alumno ese día, sean de la
-    // materia/profesor que sean -- hay que quedarse solo con las de ESTA hora
-    // concreta. El propio formulario de arriba dice la hora de la sesión actual
-    // (p.ej. "Hora: 09:00-10:00"), así que comparamos cada observación con esa
-    // misma franja horaria, que también aparece en su cabecera ".observacio-bloc-info".
+    // Esta ventana lista TODAS las observaciones de ese alumno, de cualquier día y
+    // materia -- hay que quedarse solo con la de ESTE día y ESTA hora concretos. El
+    // propio formulario de arriba lo dice (p.ej. "Observació 29-09-2026 - Hora:
+    // 12:30-13:30"), y esa misma fecha y hora aparecen también en la cabecera
+    // ".observacio-bloc-info" de cada observación. Exigimos que coincidan las DOS
+    // cosas (no solo la hora), para no arrastrar observaciones de otro día.
     const h3 = Array.from(doc.querySelectorAll('h3')).find(h=>/hora:/i.test(h.textContent));
-    const horaMatch = h3 && h3.textContent.match(/(\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})/);
+    const h3Text = h3 ? h3.textContent : '';
+    const horaMatch = h3Text.match(/(\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})/);
+    const dataMatch = h3Text.match(/(\d{1,2}-\d{1,2}-\d{4})/);
     const hora = horaMatch ? horaMatch[1].replace(/\s+/g,'') : null;
+    const data = dataMatch ? dataMatch[1] : null;
 
     const blocks = Array.from(doc.querySelectorAll('.observacio-bloc'));
     if(blocks.length === 0) return '';
-    const relevant = hora
+    const relevant = (hora || data)
       ? blocks.filter(b=>{
           const info = (b.querySelector('.observacio-bloc-info')?.textContent||'').replace(/\s+/g,'');
-          return info.includes(hora);
+          const horaOk = !hora || info.includes(hora);
+          const dataOk = !data || info.includes(data);
+          return horaOk && dataOk;
         })
-      : blocks; // si no se pudo leer la hora de referencia, mejor no perder nada
+      : blocks; // si no se pudo leer ni la fecha ni la hora de referencia, mejor no perder nada
     return relevant.map(b=>(b.querySelector('.observacio-bloc-text')?.textContent||'').trim()).filter(Boolean).join('\n');
   }
 
