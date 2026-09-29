@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-87';
+const APP_VERSION = '2026-08-22-88';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -768,6 +768,10 @@ function openEditStudentNameModal(studentId, subjectId){
   const fToggleDossier = document.getElementById('fToggleDossier');
   if(fToggleDossier) fToggleDossier.onclick=()=>{
     student.dossierPaid = !student.dossierPaid;
+    // Si se marca "pagado" a mano, se protege frente a una futura lectura de iEduca
+    // que diga "no pagado" (puede haber pagado en efectivo y no constar ahí). Si se
+    // vuelve a marcar como "no pagado" a mano, ya no hace falta esa protección.
+    student.dossierPaidManual = student.dossierPaid;
     saveState();
     openEditStudentNameModal(studentId, subjectId);
   };
@@ -1597,6 +1601,7 @@ async function pasteDayFromIeduca(subjectId, dateIso){
       if(st.codes.includes('R')) changes.push('Retraso');
       if(st.codes.includes('m')) changes.push('Material');
       if(st.codes.includes('E')) changes.push('E (Exempt/Expulsió en iEduca)');
+      if(st.codes.includes('J')) changes.push('J (Falta justificada en iEduca)');
       if(st.codes.includes('C') && (!rec || !rec.actitud || rec.actitud==='CC')) changes.push('Actitud CC');
       if(st.codes.includes('D') && (!rec || rec.deures==null || rec.deures===0)) changes.push('Deures=0');
       if(st.obsText && (!rec || !rec.actitudNota || !rec.actitudNota.trim())) changes.push('Nota: "'+(st.obsText.length>50?st.obsText.slice(0,50)+'…':st.obsText)+'"');
@@ -1628,9 +1633,9 @@ async function pasteDayFromIeduca(subjectId, dateIso){
       if(!p.matched || p.conflict) return;
       let rec = state.records.find(r=>r.studentId===p.matched.id && r.date===dateIso);
       if(!rec){ rec = { id:uid(), studentId:p.matched.id, date:dateIso, assistencia:[], actitud:null, actitudNota:'', deures:null, participacio:null, gestio:null }; state.records.push(rec); }
-      // F/R/m/E se sincronizan tal cual (sin tocar J, que es solo de Mi Horario)
-      rec.assistencia = (rec.assistencia||[]).filter(a=>a!=='F'&&a!=='R'&&a!=='m'&&a!=='E');
-      ['F','R','m','E'].forEach(c=>{ if(p.codes.includes(c)) rec.assistencia.push(c); });
+      // F/R/m/E/J se sincronizan tal cual, tomando lo que diga iEduca
+      rec.assistencia = (rec.assistencia||[]).filter(a=>a!=='F'&&a!=='R'&&a!=='m'&&a!=='E'&&a!=='J');
+      ['F','R','m','E','J'].forEach(c=>{ if(p.codes.includes(c)) rec.assistencia.push(c); });
       if(p.codes.includes('C') && (!rec.actitud || rec.actitud==='CC')) rec.actitud = 'CC';
       if(p.codes.includes('D') && (rec.deures==null || rec.deures===0)) rec.deures = 0;
       if(p.obsText && (!rec.actitudNota || !rec.actitudNota.trim())) rec.actitudNota = p.obsText;
@@ -1659,8 +1664,12 @@ async function pasteDossierFromIeduca(){
     allStudents.forEach(s=>{ const sc = nameMatchScore(st.name, s.name); if(sc>bestScore){ bestScore=sc; best=s; } });
     const matched = (best && bestScore>=0.5) ? best : null;
     const motxilla = !!st.motxilla;
-    const changes = matched && (matched.dossierPaid !== st.paid || !!matched.motxilla !== motxilla);
-    return { ieducaName: st.name, matched, paid: st.paid, motxilla, changes };
+    // Si se marcó "pagado" a mano (posible pago en efectivo, sin reflejar en iEduca),
+    // no dejamos que una lectura de iEduca con "no pagado" lo desmarque.
+    const protectedManualPaid = matched && matched.dossierPaidManual && matched.dossierPaid===true && st.paid===false;
+    const effectivePaid = protectedManualPaid ? true : st.paid;
+    const changes = matched && (matched.dossierPaid !== effectivePaid || !!matched.motxilla !== motxilla);
+    return { ieducaName: st.name, matched, paid: effectivePaid, protectedManualPaid, motxilla, changes };
   });
 
   const changesCount = plan.filter(p=>p.matched && p.changes).length;
@@ -1835,9 +1844,19 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
   document.querySelectorAll('#drAssist button').forEach(b=>{
     b.onclick=()=>{
       const v = b.dataset.v;
-      if(rec.assistencia.includes(v)) rec.assistencia = rec.assistencia.filter(x=>x!==v);
-      else rec.assistencia.push(v);
-      b.classList.toggle('active');
+      const solo = ['F','J','E']; // estas tres son excluyentes entre sí y con todo lo demás
+      if(rec.assistencia.includes(v)){
+        rec.assistencia = rec.assistencia.filter(x=>x!==v);
+      } else if(solo.includes(v)){
+        rec.assistencia = [v];
+      } else {
+        // v es R o m: solo estas dos pueden ir juntas; quitamos F/J/E si hubiera
+        rec.assistencia = rec.assistencia.filter(x=>!solo.includes(x));
+        rec.assistencia.push(v);
+      }
+      document.querySelectorAll('#drAssist button').forEach(btn=>{
+        btn.classList.toggle('active', rec.assistencia.includes(btn.dataset.v));
+      });
       persistRecord(rec);
     };
   });

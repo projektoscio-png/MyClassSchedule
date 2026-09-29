@@ -75,12 +75,34 @@
     return relevant.map(b=>(b.querySelector('.observacio-bloc-text')?.textContent||'').trim()).filter(Boolean).join('\n');
   }
 
+  function findPlainTextCode(id_per){
+    // Hay situaciones en las que iEduca no pinta los botones normales, solo una
+    // palabra suelta dentro de la fila de esa hora: "Exempt"/"Expulsió" (E), o
+    // "Falta justificada" cuando el tutor ya la ha justificado (J). Esa fila no
+    // lleva el id_per directamente, pero sí en su onmouseover (apunta al div
+    // "sobre_<id_per>" de la columna de la izquierda).
+    const candidates = document.querySelectorAll('.fal4');
+    for(const div of candidates){
+      const onmouseover = div.getAttribute('onmouseover') || '';
+      if(!onmouseover.includes('sobre_'+id_per)) continue;
+      const text = (div.textContent||'').trim();
+      if(/^(exempt|expulsi[oó])$/i.test(text)) return 'E';
+      if(/^falta justificada$/i.test(text)) return 'J';
+    }
+    return null;
+  }
+
   const results = directory.map(d=>{
     const codes = [];
-    ['F','R','m','C'].forEach(letter=>{
-      const btn = findLetterButton(d.id_per, letter);
-      if(btn && btn.hasAttribute('checked')) codes.push(letter);
-    });
+    const plainCode = findPlainTextCode(d.id_per);
+    if(plainCode){
+      codes.push(plainCode);
+    } else {
+      ['F','R','m','C'].forEach(letter=>{
+        const btn = findLetterButton(d.id_per, letter);
+        if(btn && btn.hasAttribute('checked')) codes.push(letter);
+      });
+    }
     return { id_per: d.id_per, name: d.name, codes, obsText: null, obsStatus: 'pendiente' };
   });
 
