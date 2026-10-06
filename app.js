@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-90';
+const APP_VERSION = '2026-08-22-91';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -556,10 +556,10 @@ function openSubjectDetailModal(subjectId){
           <span class="student-list-num">${idx+1}</span>
           <div class="student-avatar" data-photo-for="${s.id}" data-edit-photo="${s.id}" title="Toca para añadir/cambiar foto">${escapeHtml((s.name.replace(/,.*/, '').trim()[0]||'?').toUpperCase())}</div>
           <span class="student-list-name">${escapeHtml(s.name)}</span>
+          <button data-edit-student="${s.id}" aria-label="Ficha del alumno" class="student-list-del" style="color:var(--ink-soft);">${ICONS.pencil}</button>
           ${(s.dossierPaid || s.motxilla) ? `<span title="${s.dossierDelivered?'Dossier entregado':'Dossier sin entregar'}" style="font-size:15px;flex-shrink:0;${s.dossierDelivered?'':'opacity:.25;'}">📦</span>` : ''}
           ${s.motxilla ? `<span title="Motxilla (no paga)" style="font-size:15px;flex-shrink:0;">🎒</span>` : `<span title="${s.dossierPaid?'Dossier pagado':'Dossier sin pagar'}" style="font-size:15px;flex-shrink:0;">${s.dossierPaid?'💰':'<span style=\"opacity:.25;\">💰</span>'}</span>`}
-          <button data-edit-student="${s.id}" aria-label="Editar nombre" class="student-list-del" style="color:var(--ink-soft);">${ICONS.pencil}</button>
-          <button data-del-student="${s.id}" aria-label="Eliminar" class="student-list-del">${ICONS.x}</button>
+          <button data-del-student="${s.id}" aria-label="Eliminar alumno" class="student-list-del" style="margin-left:18px;">${ICONS.x}</button>
         </div>
       `).join('')}</div>` : `<div style="font-size:13px;color:var(--ink-faint);">Todavía no hay alumnos en esta clase.</div>`}
       <div class="btn-row" style="margin-top:10px;">
@@ -582,10 +582,20 @@ function openSubjectDetailModal(subjectId){
     el.onclick=(e)=>{
       e.stopPropagation();
       const sid = el.dataset.delStudent;
-      state.students = state.students.filter(s=>s.id!==sid);
-      state.records = state.records.filter(r=>r.studentId!==sid);
-      deletePhoto(sid);
-      saveState(); render(); openSubjectDetailModal(subjectId); toast('Alumno eliminado');
+      const st = state.students.find(x=>x.id===sid);
+      openModal(`
+        <div class="modal-head"><div class="modal-title">Eliminar alumno</div></div>
+        <p style="font-size:13.5px;color:var(--ink);line-height:1.5;">¿Seguro que quieres eliminar a <b>${escapeHtml(st?st.name:'este alumno')}</b>? Se borrarán también todos sus registros diarios y su foto. No se puede deshacer.</p>
+        <button class="btn btn-danger" id="confirmDelStudent">${ICONS.trash} Sí, eliminar</button>
+        <button class="btn btn-ghost" id="cancelDelStudent" style="margin-top:8px;">Cancelar</button>
+      `);
+      document.getElementById('cancelDelStudent').onclick=()=>{ closeModal(); openSubjectDetailModal(subjectId); };
+      document.getElementById('confirmDelStudent').onclick=()=>{
+        state.students = state.students.filter(s=>s.id!==sid);
+        state.records = state.records.filter(r=>r.studentId!==sid);
+        deletePhoto(sid);
+        saveState(); render(); closeModal(); openSubjectDetailModal(subjectId); toast('Alumno eliminado');
+      };
     };
   });
   document.querySelectorAll('[data-edit-student]').forEach(el=>{
