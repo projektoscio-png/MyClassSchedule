@@ -10,7 +10,7 @@ const DRIVE_FOLDER_NAME = 'Mi Horario';
 const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
 const DRIVE_BACKUPS_KEEP = 40;
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-99';
+const APP_VERSION = '2026-08-22-100';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -2171,7 +2171,7 @@ function renderHolidays(){
       <div class="settings-icon">${ICONS.upload}</div>
       <div class="settings-text">
         <div class="settings-title">Restaurar copia anterior de Drive</div>
-        <div class="settings-desc">Restaurar o borrar copias (carpeta «Mi Horario» en Drive)</div>
+        <div class="settings-desc">Guardar, restaurar o borrar copias (carpeta «Mi Horario» en Drive)</div>
       </div>
       <button class="settings-action" id="btnDriveBackups">Ver</button>
     </div>
@@ -3219,9 +3219,19 @@ async function openDriveBackupsModal(){
   openModal(`
     <div class="modal-head"><div class="modal-title">Copias anteriores en Drive</div>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+    <button class="btn btn-primary" id="btnSaveManualBackup" style="margin:0 0 12px">💾 Guardar copia ahora en Drive</button>
     <div id="driveBkList" style="font-size:13.5px;color:var(--ink-soft)">Buscando en Drive…</div>
   `);
   const box = document.getElementById('driveBkList');
+  document.getElementById('btnSaveManualBackup').onclick = async function(){
+    const btn = this; btn.disabled = true; btn.textContent = 'Guardando…';
+    try{
+      const token = await driveGetToken(false);
+      await driveSaveBackup(token, JSON.parse(JSON.stringify(state)), 'manual');
+      toast('Copia guardada en Drive');
+      openDriveBackupsModal();
+    }catch(e){ btn.disabled = false; btn.textContent = '💾 Guardar copia ahora en Drive'; toast('No se pudo guardar la copia: '+e.message); }
+  };
   try{
     const token = await driveGetToken(false);
     const files = await driveListBackups(token);
@@ -3229,7 +3239,7 @@ async function openDriveBackupsModal(){
     const draw = ()=>{
       if(!files.length){ box.textContent = 'No quedan copias en Drive.'; return; }
       box.innerHTML = files.map((f,i)=>{
-        const tag = /-dispositivo|-auto/.test(f.name) ? (f.name.includes('dispositivo')?'del dispositivo, antes de actualizar':'automática antigua') : 'de Drive, antes de sobrescribir';
+        const tag = f.name.includes('-manual') ? '💾 guardada por ti (no se borra sola)' : /-dispositivo|-auto/.test(f.name) ? (f.name.includes('dispositivo')?'del dispositivo, antes de actualizar':'automática antigua') : 'de Drive, antes de sobrescribir';
         return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)">
           <div style="flex:1;min-width:0"><b>${fmtDateTime(f.createdTime)}</b><div style="font-size:12px">${tag}${f.size?' · '+Math.round(f.size/1024)+' KB':''}</div></div>
           <button class="settings-action" data-i="${i}">Restaurar</button>
@@ -3624,7 +3634,7 @@ async function driveSaveBackup(token, data, tag){
   await driveUpload(token, null, data, name);
   try{ // conserva solo las más recientes
     const all = await driveListBackups(token);
-    for(const f of all.slice(DRIVE_BACKUPS_KEEP)){
+    for(const f of all.filter(x=>!x.name.includes('-manual')).slice(DRIVE_BACKUPS_KEEP)){
       await driveFetchWithRetry(`https://www.googleapis.com/drive/v3/files/${f.id}`, { method:'DELETE' });
     }
   }catch(e){}
