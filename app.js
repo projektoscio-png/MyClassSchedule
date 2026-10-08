@@ -10,7 +10,7 @@ const DRIVE_FOLDER_NAME = 'Mi Horario';
 const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
 const DRIVE_BACKUPS_KEEP = 40;
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-93';
+const APP_VERSION = '2026-08-22-94';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -2171,7 +2171,7 @@ function renderHolidays(){
       <div class="settings-icon">${ICONS.upload}</div>
       <div class="settings-text">
         <div class="settings-title">Restaurar copia anterior de Drive</div>
-        <div class="settings-desc">Carpeta «Mi Horario» en Drive: copias con fecha y hora</div>
+        <div class="settings-desc">Restaurar o borrar copias (carpeta «Mi Horario» en Drive)</div>
       </div>
       <button class="settings-action" id="btnDriveBackups">Ver</button>
     </div>
@@ -3198,20 +3198,37 @@ async function openDriveBackupsModal(){
     const token = await driveGetToken(false);
     const files = await driveListBackups(token);
     if(!files.length){ box.textContent = 'Todavía no hay copias en Drive.'; return; }
-    box.innerHTML = files.map((f,i)=>{
-      const tag = /-dispositivo|-auto/.test(f.name) ? (f.name.includes('dispositivo')?'del dispositivo, antes de actualizar':'automática antigua') : 'de Drive, antes de sobrescribir';
-      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)">
-        <div><b>${fmtDateTime(f.createdTime)}</b><div style="font-size:12px">${tag}${f.size?' · '+Math.round(f.size/1024)+' KB':''}</div></div>
-        <button class="settings-action" data-i="${i}">Restaurar</button></div>`;
-    }).join('');
-    box.querySelectorAll('button[data-i]').forEach(b=>b.onclick=async()=>{
-      const f = files[+b.dataset.i];
-      b.disabled = true; b.textContent = '…';
-      try{
-        const data = await driveDownload(token, f.id);
-        confirmImportPreview(data, 'la copia de Drive del '+fmtDateTime(f.createdTime));
-      }catch(e){ b.disabled=false; b.textContent='Restaurar'; toast(e.message); }
-    });
+    const draw = ()=>{
+      if(!files.length){ box.textContent = 'No quedan copias en Drive.'; return; }
+      box.innerHTML = files.map((f,i)=>{
+        const tag = /-dispositivo|-auto/.test(f.name) ? (f.name.includes('dispositivo')?'del dispositivo, antes de actualizar':'automática antigua') : 'de Drive, antes de sobrescribir';
+        return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)">
+          <div style="flex:1;min-width:0"><b>${fmtDateTime(f.createdTime)}</b><div style="font-size:12px">${tag}${f.size?' · '+Math.round(f.size/1024)+' KB':''}</div></div>
+          <button class="settings-action" data-i="${i}">Restaurar</button>
+          <button class="settings-action" data-del="${i}" style="color:#C0392B" aria-label="Borrar copia">🗑</button></div>`;
+      }).join('');
+      box.querySelectorAll('button[data-i]').forEach(b=>b.onclick=async()=>{
+        const f = files[+b.dataset.i];
+        b.disabled = true; b.textContent = '…';
+        try{
+          const data = await driveDownload(token, f.id);
+          confirmImportPreview(data, 'la copia de Drive del '+fmtDateTime(f.createdTime));
+        }catch(e){ b.disabled=false; b.textContent='Restaurar'; toast(e.message); }
+      });
+      box.querySelectorAll('button[data-del]').forEach(b=>b.onclick=async()=>{
+        const f = files[+b.dataset.del];
+        const ok = await confirmDialog('¿Borrar esta copia?',
+          `Se borrará la copia del <b>${fmtDateTime(f.createdTime)}</b> de Google Drive. Esta acción no se puede deshacer.`, 'Borrar');
+        if(!ok) return;
+        try{
+          const res = await driveFetchWithRetry(`https://www.googleapis.com/drive/v3/files/${f.id}`, { method:'DELETE' });
+          if(!res.ok && res.status!==404) throw new Error('No se pudo borrar la copia');
+          files.splice(+b.dataset.del,1);
+          draw(); toast('Copia borrada');
+        }catch(e){ toast(e.message); }
+      });
+    };
+    draw();
   }catch(e){ box.textContent = 'Error: '+e.message; }
 }
 
@@ -3593,6 +3610,23 @@ async function driveBackupRemoteDaily(token, remoteData){
 }
 async function driveBackupLocal(snapshot){
   try{ const token = await driveGetToken(true); await driveSaveBackup(token, snapshot, 'dispositivo'); }catch(e){}
+}
+
+/* Diálogo de confirmación que no tapa el modal que haya abierto. */
+function confirmDialog(title, htmlMsg, okLabel){
+  return new Promise(resolve=>{
+    const o = document.createElement('div');
+    o.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px;';
+    o.innerHTML = `<div style="background:var(--card,#fff);color:var(--ink,#222);border-radius:16px;max-width:380px;width:100%;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.3);">
+      <div style="font-weight:700;font-size:16px;margin-bottom:8px">${title}</div>
+      <div style="font-size:13.5px;line-height:1.5;color:var(--ink-soft,#555)">${htmlMsg}</div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn btn-ghost" data-r="0" style="margin:0;flex:1">Cancelar</button>
+        <button class="btn btn-primary" data-r="1" style="margin:0;flex:1;background:#C0392B">${okLabel||'Aceptar'}</button>
+      </div></div>`;
+    document.body.appendChild(o);
+    o.querySelectorAll('button[data-r]').forEach(b=>b.onclick=()=>{ o.remove(); resolve(b.dataset.r==='1'); });
+  });
 }
 
 let driveUploadPaused = false;
