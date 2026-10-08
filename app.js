@@ -10,7 +10,7 @@ const DRIVE_FOLDER_NAME = 'Mi Horario';
 const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
 const DRIVE_BACKUPS_KEEP = 40;
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-100';
+const APP_VERSION = '2026-08-22-101';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -2152,7 +2152,7 @@ function renderHolidays(){
       <div class="settings-icon">${ICONS.download}</div>
       <div class="settings-text">
         <div class="settings-title">Exportar copia de seguridad</div>
-        <div class="settings-desc">Descarga un archivo .json con todos tus datos</div>
+        <div class="settings-desc">Descarga un archivo .json o guárdalo en tu carpeta de Drive</div>
       </div>
       <button class="settings-action" id="btnExport">Exportar</button>
     </div>
@@ -2171,7 +2171,7 @@ function renderHolidays(){
       <div class="settings-icon">${ICONS.upload}</div>
       <div class="settings-text">
         <div class="settings-title">Restaurar copia anterior de Drive</div>
-        <div class="settings-desc">Guardar, restaurar o borrar copias (carpeta «Mi Horario» en Drive)</div>
+        <div class="settings-desc">Restaurar o borrar copias (carpeta «Mi Horario» en Drive)</div>
       </div>
       <button class="settings-action" id="btnDriveBackups">Ver</button>
     </div>
@@ -2408,7 +2408,9 @@ function bindContentEvents(){
     saveState(); render();
   };
   const btnExport = document.getElementById('btnExport');
-  if(btnExport) btnExport.onclick = exportData;
+  if(btnExport) btnExport.onclick = ()=>{
+    if(driveConfigured() && driveIsConnected()) openExportChoiceModal(); else exportData();
+  };
   const btnImport = document.getElementById('btnImport');
   if(btnImport) btnImport.onclick = ()=>document.getElementById('fileImport').click();
   const btnDriveBackups = document.getElementById('btnDriveBackups');
@@ -3215,23 +3217,32 @@ function bytesLookLikeSqlite(bytes){
   return true;
 }
 
-async function openDriveBackupsModal(){
+function openExportChoiceModal(){
   openModal(`
-    <div class="modal-head"><div class="modal-title">Copias anteriores en Drive</div>
+    <div class="modal-head"><div class="modal-title">Exportar copia de seguridad</div>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
-    <button class="btn btn-primary" id="btnSaveManualBackup" style="margin:0 0 12px">💾 Guardar copia ahora en Drive</button>
-    <div id="driveBkList" style="font-size:13.5px;color:var(--ink-soft)">Buscando en Drive…</div>
+    <button class="btn btn-primary" id="btnExpFile" style="margin:0 0 10px">${ICONS.download} Descargar archivo (.json)</button>
+    <button class="btn btn-ghost" id="btnExpDrive" style="margin:0">💾 Guardar copia en Drive</button>
+    <div style="font-size:12px;color:var(--ink-soft);margin-top:10px;line-height:1.5">En Drive se guarda en la carpeta «Mi Horario», con fecha y hora. Estas copias no se borran solas; puedes restaurarlas o borrarlas desde «Restaurar o borrar copias».</div>
   `);
-  const box = document.getElementById('driveBkList');
-  document.getElementById('btnSaveManualBackup').onclick = async function(){
+  document.getElementById('btnExpFile').onclick = ()=>{ closeModal(); exportData(); };
+  document.getElementById('btnExpDrive').onclick = async function(){
     const btn = this; btn.disabled = true; btn.textContent = 'Guardando…';
     try{
       const token = await driveGetToken(false);
       await driveSaveBackup(token, JSON.parse(JSON.stringify(state)), 'manual');
-      toast('Copia guardada en Drive');
-      openDriveBackupsModal();
-    }catch(e){ btn.disabled = false; btn.textContent = '💾 Guardar copia ahora en Drive'; toast('No se pudo guardar la copia: '+e.message); }
+      closeModal(); toast('Copia guardada en Drive');
+    }catch(e){ btn.disabled = false; btn.textContent = '💾 Guardar copia en Drive'; toast('No se pudo guardar la copia: '+e.message); }
   };
+}
+
+async function openDriveBackupsModal(){
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Copias anteriores en Drive</div>
+      <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+    <div id="driveBkList" style="font-size:13.5px;color:var(--ink-soft)">Buscando en Drive…</div>
+  `);
+  const box = document.getElementById('driveBkList');
   try{
     const token = await driveGetToken(false);
     const files = await driveListBackups(token);
