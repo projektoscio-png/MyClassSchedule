@@ -6,8 +6,11 @@ const STORAGE_KEY = 'miHorario_data_v1';
 const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.googleusercontent.com';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
+const DRIVE_FOLDER_NAME = 'Mi Horario';
+const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
+const DRIVE_BACKUPS_KEEP = 40;
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-92';
+const APP_VERSION = '2026-08-22-93';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -171,6 +174,21 @@ function getOrCreateSubject(name){
 
 /* ---------- toast ---------- */
 let toastTimer=null;
+function fmtDateTime(ts){
+  const d = new Date(ts);
+  return d.toLocaleDateString('es-ES',{day:'numeric',month:'short'}) + ', ' + d.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'});
+}
+function dataCounts(d){
+  d = d || {};
+  const n = k => Array.isArray(d[k]) ? d[k].length : 0;
+  const c = { subjects:n('subjects'), classes:n('classes'), items:n('items'), holidays:n('holidays'), students:n('students'), records:n('records'), rounds:n('boardRounds') };
+  c.total = c.subjects+c.classes+c.items+c.holidays+c.students+c.records+c.rounds;
+  return c;
+}
+function fmtCounts(c){ return `${c.students} alumnos · ${c.records} registros · ${c.items} exám./tareas · ${c.classes} clases`; }
+/* "src" tiene claramente menos datos que "dst" (3 o más elementos menos). */
+function isMuchLighter(src, dst){ const a=dataCounts(src).total, b=dataCounts(dst).total; return a<b && (b-a)>=3; }
+
 function toast(msg){
   const t=document.getElementById('toast');
   t.textContent=msg;
@@ -2102,7 +2120,7 @@ function renderHolidays(){
           : driveIsConnected() ? (
               localStorage.getItem('driveNeedsReconnect')
                 ? '⚠️ Sesión caducada, pulsa Sincronizar para reconectar'
-                : ('Conectado' + (localStorage.getItem('driveLastSync') ? ' · última sync ' + new Date(Number(localStorage.getItem('driveLastSync'))).toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}) : ''))
+                : ('Conectado' + (localStorage.getItem('driveLastSync') ? ' · última sync ' + fmtDateTime(Number(localStorage.getItem('driveLastSync'))) : ''))
             )
           : 'Mantén tus datos iguales entre dispositivos'
         }</div>
@@ -2153,7 +2171,7 @@ function renderHolidays(){
       <div class="settings-icon">${ICONS.upload}</div>
       <div class="settings-text">
         <div class="settings-title">Restaurar copia anterior de Drive</div>
-        <div class="settings-desc">Copias automáticas guardadas antes de cada sobrescritura</div>
+        <div class="settings-desc">Carpeta «Mi Horario» en Drive: copias con fecha y hora</div>
       </div>
       <button class="settings-action" id="btnDriveBackups">Ver</button>
     </div>
@@ -3178,16 +3196,12 @@ async function openDriveBackupsModal(){
   const box = document.getElementById('driveBkList');
   try{
     const token = await driveGetToken(false);
-    const q = encodeURIComponent(`name contains 'mi-horario-backup-auto-' and trashed=false`);
-    const res = await driveFetchWithRetry(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&orderBy=createdTime desc&pageSize=20&fields=files(id,name,createdTime,size)`);
-    if(!res.ok) throw new Error('No se pudo consultar Google Drive');
-    const files = (await res.json()).files || [];
-    if(!files.length){ box.textContent = 'No hay copias automáticas en Drive.'; return; }
+    const files = await driveListBackups(token);
+    if(!files.length){ box.textContent = 'Todavía no hay copias en Drive.'; return; }
     box.innerHTML = files.map((f,i)=>{
-      const d = new Date(f.createdTime);
-      const lbl = d.toLocaleDateString('es-ES')+' '+d.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'});
+      const tag = /-dispositivo|-auto/.test(f.name) ? (f.name.includes('dispositivo')?'del dispositivo, antes de actualizar':'automática antigua') : 'de Drive, antes de sobrescribir';
       return `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)">
-        <div><b>${lbl}</b><div style="font-size:12px">${f.size?Math.round(f.size/1024)+' KB':''}</div></div>
+        <div><b>${fmtDateTime(f.createdTime)}</b><div style="font-size:12px">${tag}${f.size?' · '+Math.round(f.size/1024)+' KB':''}</div></div>
         <button class="settings-action" data-i="${i}">Restaurar</button></div>`;
     }).join('');
     box.querySelectorAll('button[data-i]').forEach(b=>b.onclick=async()=>{
@@ -3195,7 +3209,7 @@ async function openDriveBackupsModal(){
       b.disabled = true; b.textContent = '…';
       try{
         const data = await driveDownload(token, f.id);
-        confirmImportPreview(data, 'la copia de Drive del '+new Date(f.createdTime).toLocaleString('es-ES'));
+        confirmImportPreview(data, 'la copia de Drive del '+fmtDateTime(f.createdTime));
       }catch(e){ b.disabled=false; b.textContent='Restaurar'; toast(e.message); }
     });
   }catch(e){ box.textContent = 'Error: '+e.message; }
@@ -3203,11 +3217,16 @@ async function openDriveBackupsModal(){
 
 function confirmImportPreview(parsed, sourceLabel, opts){
   opts = opts || {};
-  const nc = (parsed.subjects||[]).length, ncl=(parsed.classes||[]).length, ni=(parsed.items||[]).length, nh=(parsed.holidays||[]).length;
+  const nc = dataCounts(parsed), cur = dataCounts(state);
+  const lighter = isMuchLighter(parsed, state);
   openModal(`
     <div class="modal-head"><div class="modal-title">Importar copia</div>
       <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
-    <p style="font-size:13.5px;color:var(--ink-soft);line-height:1.5;">Se encontraron en ${sourceLabel}: <b>${nc}</b> asignaturas, <b>${ncl}</b> clases, <b>${ni}</b> exámenes/tareas y <b>${nh}</b> festivos.<br><br>Esto reemplazará todos los datos actuales de la app. ¿Continuar?</p>
+    <p style="font-size:13.5px;color:var(--ink-soft);line-height:1.5;">
+      <b>Copia a cargar</b> (${sourceLabel}):<br>${fmtCounts(nc)}<br>
+      <b>Datos actuales de la app:</b><br>${fmtCounts(cur)}<br><br>
+      ${lighter?'<b style="color:#C0392B">⚠️ La copia tiene menos datos que los actuales.</b><br><br>':''}
+      Esto reemplazará todos los datos actuales de la app. ¿Continuar?</p>
     <div class="btn-row">
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
       <button class="btn btn-primary" id="fConfirmImport" style="margin-top:0">Importar</button>
@@ -3224,6 +3243,7 @@ function confirmImportPreview(parsed, sourceLabel, opts){
       saveState();
     }
     closeModal(); render(); toast('Datos importados');
+    if(opts.onApplied) opts.onApplied();
   };
 }
 
@@ -3493,13 +3513,131 @@ async function driveFetchWithRetry(url, options){
   return res;
 }
 
+/* Carpeta "Mi Horario" en Drive: ahí viven el archivo de sincronización, las fotos y las copias. */
+let _driveFolderPromise = null;
+function driveGetFolderId(token){
+  if(_driveFolderPromise) return _driveFolderPromise;
+  _driveFolderPromise = (async()=>{
+    try{
+      const q = encodeURIComponent(`name='${DRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+      const res = await driveFetchWithRetry(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id)`);
+      if(!res.ok) throw new Error('folder query');
+      const found = ((await res.json()).files||[])[0];
+      if(found) return found.id;
+      const cr = await driveFetchWithRetry('https://www.googleapis.com/drive/v3/files?fields=id', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ name: DRIVE_FOLDER_NAME, mimeType:'application/vnd.google-apps.folder' })
+      });
+      if(!cr.ok) throw new Error('folder create');
+      return (await cr.json()).id;
+    }catch(e){ _driveFolderPromise = null; return null; } // sin carpeta: se trabaja como antes, en la raíz
+  })();
+  return _driveFolderPromise;
+}
+
+async function driveMoveToFolder(fileId, parents, folderId){
+  try{
+    const rm = (parents||[]).filter(x=>x!==folderId).join(',');
+    await driveFetchWithRetry(`https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${folderId}${rm?'&removeParents='+rm:''}`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'}, body:'{}'
+    });
+  }catch(e){ /* no es crítico */ }
+}
+
 async function driveFindFile(token, fileName){
   fileName = fileName || DRIVE_FILE_NAME;
-  const q = encodeURIComponent(`name='${fileName}' and trashed=false`);
-  const res = await driveFetchWithRetry(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,modifiedTime)`);
+  const folderId = await driveGetFolderId(token);
+  const fields = 'files(id,modifiedTime,parents)';
+  const run = async (query)=>{
+    const res = await driveFetchWithRetry(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&spaces=drive&fields=${fields}`);
+    if(!res.ok) throw new Error('No se pudo consultar Google Drive');
+    return ((await res.json()).files||[])[0] || null;
+  };
+  if(folderId){
+    const inFolder = await run(`name='${fileName}' and '${folderId}' in parents and trashed=false`);
+    if(inFolder) return inFolder;
+  }
+  const legacy = await run(`name='${fileName}' and trashed=false`);
+  if(legacy && folderId) await driveMoveToFolder(legacy.id, legacy.parents, folderId); // migra a la carpeta
+  return legacy;
+}
+
+/* Copias de seguridad (las de la carpeta y las antiguas sueltas), de más nueva a más vieja. */
+async function driveListBackups(token){
+  const folderId = await driveGetFolderId(token);
+  const q = encodeURIComponent(`name contains '${DRIVE_BACKUP_PREFIX}' and trashed=false`);
+  const res = await driveFetchWithRetry(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&orderBy=createdTime desc&pageSize=100&fields=files(id,name,createdTime,size,parents)`);
   if(!res.ok) throw new Error('No se pudo consultar Google Drive');
-  const data = await res.json();
-  return (data.files && data.files[0]) || null;
+  const files = (await res.json()).files || [];
+  if(folderId){ for(const f of files){ if(!(f.parents||[]).includes(folderId)) await driveMoveToFolder(f.id, f.parents, folderId); } }
+  return files;
+}
+
+async function driveSaveBackup(token, data, tag){
+  const d = new Date(); const z=n=>String(n).padStart(2,'0');
+  const name = `${DRIVE_BACKUP_PREFIX}${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}_${z(d.getHours())}-${z(d.getMinutes())}-${z(d.getSeconds())}-${tag}.json`;
+  await driveUpload(token, null, data, name);
+  try{ // conserva solo las más recientes
+    const all = await driveListBackups(token);
+    for(const f of all.slice(DRIVE_BACKUPS_KEEP)){
+      await driveFetchWithRetry(`https://www.googleapis.com/drive/v3/files/${f.id}`, { method:'DELETE' });
+    }
+  }catch(e){}
+}
+
+/* Copia de lo que hay en Drive antes de sobrescribirlo. Una vez al día en el uso normal. */
+async function driveBackupRemoteDaily(token, remoteData){
+  const day = new Date().toISOString().slice(0,10);
+  if(localStorage.getItem('driveLastBackupDay')===day) return;
+  try{ await driveSaveBackup(token, remoteData, 'drive'); localStorage.setItem('driveLastBackupDay', day); }catch(e){}
+}
+async function driveBackupLocal(snapshot){
+  try{ const token = await driveGetToken(true); await driveSaveBackup(token, snapshot, 'dispositivo'); }catch(e){}
+}
+
+let driveUploadPaused = false;
+function driveAskLighterDialog(remoteData){
+  return new Promise(resolve=>{
+    const old = document.getElementById('driveGuardDlg'); if(old) old.remove();
+    const lc = dataCounts(state), rc = dataCounts(remoteData);
+    const rt = remoteData.settings && remoteData.settings.lastModified;
+    const lt = state.settings && state.settings.lastModified;
+    const o = document.createElement('div');
+    o.id = 'driveGuardDlg';
+    o.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px;';
+    o.innerHTML = `<div style="background:var(--card,#fff);color:var(--ink,#222);border-radius:16px;max-width:420px;width:100%;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.3);">
+      <div style="font-weight:700;font-size:16px;margin-bottom:8px">⚠️ Esta copia tiene menos datos que la de Drive</div>
+      <div style="font-size:13.5px;line-height:1.5;color:var(--ink-soft,#555)">
+        <b>Aquí${lt?' ('+fmtDateTime(lt)+')':''}:</b><br>${fmtCounts(lc)}<br>
+        <b>En Drive${rt?' ('+fmtDateTime(rt)+')':''}:</b><br>${fmtCounts(rc)}<br><br>
+        Subir esta copia reemplazaría la de Drive y podrías perder datos. Antes de cualquier cambio se guarda una copia de seguridad.</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">
+        <button class="btn btn-primary" data-c="download" style="margin:0">Traer la de Drive (recomendado)</button>
+        <button class="btn btn-ghost" data-c="upload" style="margin:0">Subir la de aquí igualmente</button>
+        <button class="btn btn-ghost" data-c="cancel" style="margin:0">Ahora no</button>
+      </div></div>`;
+    document.body.appendChild(o);
+    o.querySelectorAll('button[data-c]').forEach(b=>b.onclick=()=>{ o.remove(); resolve(b.dataset.c); });
+  });
+}
+
+/* Devuelve true si se puede sobrescribir Drive con los datos locales. */
+async function driveGuardOverwrite(token, remoteData, onApplied){
+  if(!isMuchLighter(state, remoteData)) return true;
+  const choice = await driveAskLighterDialog(remoteData);
+  if(choice==='upload'){
+    await driveSaveBackup(token, remoteData, 'drive-previo');
+    localStorage.setItem('driveLastBackupDay', new Date().toISOString().slice(0,10));
+    return true;
+  }
+  driveUploadPaused = true;
+  if(choice==='download'){
+    driveBackupLocal(JSON.parse(JSON.stringify(state)));
+    confirmImportPreview(remoteData, 'la copia de Google Drive', {fromDrive:true, onApplied:()=>{ driveUploadPaused=false; if(onApplied) onApplied(); }});
+  } else {
+    toast('Subida a Drive en pausa. Pulsa «Sincronizar ahora» cuando quieras decidir.');
+  }
+  return false;
 }
 
 async function driveDownload(token, fileId){
@@ -3521,6 +3659,8 @@ async function driveUpload(token, fileId, payload, fileName){
     return res.json();
   } else {
     const metadata = { name: fileName, mimeType:'application/json' };
+    const folderId = await driveGetFolderId(token);
+    if(folderId) metadata.parents = [folderId];
     const boundary = 'mihorario' + uid();
     const multipartBody =
       `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
@@ -3541,6 +3681,8 @@ async function driveSyncUpload(opts){
   const showToast = !!opts.showToast;
   const interactive = !!opts.interactive;
   if(!driveConfigured() || !driveIsConnected() || driveSyncing) return;
+  if(interactive) driveUploadPaused = false;
+  if(driveUploadPaused) return;
   driveSyncing = true;
   try{
     const token = await driveGetToken(!interactive);
@@ -3554,6 +3696,8 @@ async function driveSyncUpload(opts){
         driveOfferRemoteUpdate(remoteData);
         return;
       }
+      if(!(await driveGuardOverwrite(token, remoteData))) return;
+      await driveBackupRemoteDaily(token, remoteData);
       await driveUpload(token, remote.id, state);
     } else {
       await driveUpload(token, null, state);
@@ -3589,11 +3733,14 @@ function driveOfferRemoteUpdate(remoteData, onApplied){
   document.body.appendChild(t);
   document.getElementById('driveUpdateBtn').onclick = ()=>{
     t.remove();
-    confirmImportPreview(remoteData, 'la copia de Google Drive', {fromDrive:true});
-    // Solo ahora, con los datos ya puestos al día, es seguro seguir con sincronizaciones
+    // Solo cuando se aplican los datos es seguro seguir con sincronizaciones
     // automáticas (como la de deberes con Calendar) sin riesgo de "envejecer" por error
     // esta copia y hacer que parezca la más reciente sin serlo de verdad.
-    if(onApplied) onApplied();
+    const snap = JSON.parse(JSON.stringify(state));
+    confirmImportPreview(remoteData, 'la copia de Google Drive', {fromDrive:true, onApplied:()=>{
+      driveBackupLocal(snap); // guarda en Drive lo que había en este dispositivo antes de reemplazarlo
+      if(onApplied) onApplied();
+    }});
   };
   document.getElementById('driveUpdateDismiss').onclick = ()=> t.remove();
 }
@@ -3630,9 +3777,17 @@ async function driveCheckOnLoad(onSafeToSync){
       driveOfferRemoteUpdate(remoteData, onSafeToSync);
     } else {
       if((state.settings.lastModified||0) > remoteModified){
-        console.log('[MiHorario/Drive] El local es más reciente: guardando copia de seguridad de lo que hay en Drive antes de sobrescribir, y subiendo.');
-        try{ await driveUpload(token, null, remoteData, 'mi-horario-backup-auto-'+Date.now()+'.json'); }
-        catch(e){ console.log('[MiHorario/Drive] No se pudo guardar la copia de seguridad (se sube igualmente):', e.message); }
+        console.log('[MiHorario/Drive] El local es más reciente: comprobando y guardando copia de seguridad antes de sobrescribir.');
+        if(!(await driveGuardOverwrite(token, remoteData, onSafeToSync))){
+          console.log('[MiHorario/Drive] Subida detenida por seguridad (la copia local tiene menos datos).');
+          renderDriveHint();
+          return;
+        }
+        // En la apertura se guarda siempre una copia de lo que hay en Drive (una por versión distinta)
+        if(localStorage.getItem('driveLastBackupMod')!==String(remoteModified)){
+          try{ await driveSaveBackup(token, remoteData, 'drive'); localStorage.setItem('driveLastBackupMod', String(remoteModified)); }
+          catch(e){ console.log('[MiHorario/Drive] No se pudo guardar la copia de seguridad (se sube igualmente):', e.message); }
+        }
         await driveUpload(token, remote.id, state);
         localStorage.setItem('driveLastSync', String(Date.now()));
       } else {
