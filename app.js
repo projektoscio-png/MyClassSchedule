@@ -7,7 +7,7 @@ const GOOGLE_CLIENT_ID = '292792599906-9m3t841hk507s1k042193tjuigoe1svb.apps.goo
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.events';
 const DRIVE_FILE_NAME = 'mi-horario-sync.json';
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-91';
+const APP_VERSION = '2026-08-22-92';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -2150,6 +2150,15 @@ function renderHolidays(){
     </div>
     <div style="height:1px;background:var(--line)"></div>
     <div class="settings-item">
+      <div class="settings-icon">${ICONS.upload}</div>
+      <div class="settings-text">
+        <div class="settings-title">Restaurar copia anterior de Drive</div>
+        <div class="settings-desc">Copias automáticas guardadas antes de cada sobrescritura</div>
+      </div>
+      <button class="settings-action" id="btnDriveBackups">Ver</button>
+    </div>
+    <div style="height:1px;background:var(--line)"></div>
+    <div class="settings-item">
       <div class="settings-icon">${ICONS.clipboard}</div>
       <div class="settings-text">
         <div class="settings-title">Exportar registro diario</div>
@@ -2384,6 +2393,8 @@ function bindContentEvents(){
   if(btnExport) btnExport.onclick = exportData;
   const btnImport = document.getElementById('btnImport');
   if(btnImport) btnImport.onclick = ()=>document.getElementById('fileImport').click();
+  const btnDriveBackups = document.getElementById('btnDriveBackups');
+  if(btnDriveBackups) btnDriveBackups.onclick = openDriveBackupsModal;
   const fileImport = document.getElementById('fileImport');
   if(fileImport) fileImport.onchange = importData;
   const btnExportAllRecords = document.getElementById('btnExportAllRecords');
@@ -3156,6 +3167,38 @@ function bytesLookLikeSqlite(bytes){
   if(bytes.length < magic.length) return false;
   for(let i=0;i<magic.length;i++){ if(bytes[i]!==magic[i]) return false; }
   return true;
+}
+
+async function openDriveBackupsModal(){
+  openModal(`
+    <div class="modal-head"><div class="modal-title">Copias anteriores en Drive</div>
+      <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+    <div id="driveBkList" style="font-size:13.5px;color:var(--ink-soft)">Buscando en Drive…</div>
+  `);
+  const box = document.getElementById('driveBkList');
+  try{
+    const token = await driveGetToken(false);
+    const q = encodeURIComponent(`name contains 'mi-horario-backup-auto-' and trashed=false`);
+    const res = await driveFetchWithRetry(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&orderBy=createdTime desc&pageSize=20&fields=files(id,name,createdTime,size)`);
+    if(!res.ok) throw new Error('No se pudo consultar Google Drive');
+    const files = (await res.json()).files || [];
+    if(!files.length){ box.textContent = 'No hay copias automáticas en Drive.'; return; }
+    box.innerHTML = files.map((f,i)=>{
+      const d = new Date(f.createdTime);
+      const lbl = d.toLocaleDateString('es-ES')+' '+d.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'});
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)">
+        <div><b>${lbl}</b><div style="font-size:12px">${f.size?Math.round(f.size/1024)+' KB':''}</div></div>
+        <button class="settings-action" data-i="${i}">Restaurar</button></div>`;
+    }).join('');
+    box.querySelectorAll('button[data-i]').forEach(b=>b.onclick=async()=>{
+      const f = files[+b.dataset.i];
+      b.disabled = true; b.textContent = '…';
+      try{
+        const data = await driveDownload(token, f.id);
+        confirmImportPreview(data, 'la copia de Drive del '+new Date(f.createdTime).toLocaleString('es-ES'));
+      }catch(e){ b.disabled=false; b.textContent='Restaurar'; toast(e.message); }
+    });
+  }catch(e){ box.textContent = 'Error: '+e.message; }
 }
 
 function confirmImportPreview(parsed, sourceLabel, opts){
