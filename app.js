@@ -10,7 +10,7 @@ const DRIVE_FOLDER_NAME = 'Mi Horario';
 const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
 const DRIVE_BACKUPS_KEEP = 40;
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-94';
+const APP_VERSION = '2026-08-22-99';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -2563,6 +2563,9 @@ function openClassOccurrenceModal(classId, dateIso){
     ${showExamField ? `<div class="field">
       <label>📕 Examen</label>
       <input type="text" id="examTitle" placeholder="Ej. Examen tema 4" value="${escapeHtml(existingExam?existingExam.title:'')}">
+      ${hasCalendar ? `<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-soft);margin-top:8px;cursor:pointer;">
+        <input type="checkbox" id="examToCalendar" ${(!existingExam || existingExam.calendarExamText)?'checked':''} style="width:16px;height:16px;"> Sincronizar con el calendario de Google
+      </label>` : ''}
       ${existingExam ? `<button type="button" class="settings-action" id="btnDeleteExam" style="font-size:12px;color:var(--danger);margin-top:6px;">${ICONS.trash} Eliminar examen</button>` : ''}
     </div>` : ''}
     ${showDebObsFields ? `
@@ -2647,6 +2650,7 @@ function openClassOccurrenceModal(classId, dateIso){
   if(btnDeleteExam) btnDeleteExam.onclick=()=>{
     state.items = state.items.filter(i=>i.id!==existingExam.id);
     saveState(); render(); toast('Examen eliminado');
+    if(existingExam.calendarExamText) calendarSyncExam(existingExam, false);
     openClassOccurrenceModal(classId, dateIso);
   };
   const btnDeleteObs = document.getElementById('btnDeleteObs');
@@ -2691,10 +2695,16 @@ function openClassOccurrenceModal(classId, dateIso){
 
     // Examen (siempre en el día de esta ficha)
     if(examTitle){
-      if(existingExam){ Object.assign(existingExam, {title: examTitle}); }
-      else { state.items.push({ id:uid(), type:'exam', title:examTitle, date:dateIso, time:'', notes:'', remindDays:2, subjectId:cls.subjectId, classId, notified:false }); }
+      let examRef, examChanged;
+      if(existingExam){ examChanged = existingExam.title!==examTitle || !existingExam.calendarExamText; Object.assign(existingExam, {title: examTitle}); examRef = existingExam; }
+      else { examRef = { id:uid(), type:'exam', title:examTitle, date:dateIso, time:'', notes:'', remindDays:2, subjectId:cls.subjectId, classId, notified:false }; state.items.push(examRef); examChanged = true; }
+      const examCb = document.getElementById('examToCalendar');
+      const examToCal = hasCalendar && examCb && examCb.checked;
+      if(examToCal && examChanged) calendarSyncExam(examRef, true);
+      else if(!examToCal && examRef.calendarExamText) calendarSyncExam(examRef, false);
     } else if(existingExam && showExamField){
       state.items = state.items.filter(i=>i.id!==existingExam.id);
+      if(existingExam.calendarExamText) calendarSyncExam(existingExam, false);
     }
 
     // Deberes (en el día/hora elegidos en su propio selector, que puede ser distinto al de esta ficha)
@@ -3042,12 +3052,23 @@ function openItemModal(id, defaults){
       </select>
     </div>
     <div class="field"><label>Notas (opcional)</label><textarea id="fNotes" placeholder="Detalles, temario, materiales...">${existing?escapeHtml(existing.notes||''):''}</textarea></div>
+    <label id="fCalRow" style="display:none;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;cursor:pointer;">
+      <input type="checkbox" id="fExamToCalendar" ${(!existing || existing.calendarExamText)?'checked':''} style="width:16px;height:16px;">
+      Apuntar también en el calendario de Google de esta clase
+    </label>
     <button class="btn btn-primary" id="fSave">${ICONS.pencil} Guardar</button>
     ${existing?`<button class="btn btn-danger" id="fDelete">${ICONS.trash} Eliminar</button>`:''}
   `);
 
   document.getElementById('fRemind').value = existing ? String(existing.remindDays ?? 2) : '2';
-  document.querySelectorAll('#fType button').forEach(b=>b.onclick=()=>{ type=b.dataset.t; document.querySelectorAll('#fType button').forEach(x=>x.classList.toggle('active',x===b)); });
+  const updateCalRow = ()=>{
+    const nm = document.getElementById('fSubject2').value.trim().toLowerCase();
+    const sj = nm ? state.subjects.find(x=>x.name.toLowerCase()===nm) : null;
+    document.getElementById('fCalRow').style.display = (type==='exam' && sj && sj.calendarId) ? 'flex' : 'none';
+  };
+  document.querySelectorAll('#fType button').forEach(b=>b.onclick=()=>{ type=b.dataset.t; document.querySelectorAll('#fType button').forEach(x=>x.classList.toggle('active',x===b)); updateCalRow(); });
+  document.getElementById('fSubject2').addEventListener('input', updateCalRow);
+  updateCalRow();
 
   document.getElementById('fSave').onclick=()=>{
     const title = document.getElementById('fTitle').value.trim();
@@ -3059,12 +3080,18 @@ function openItemModal(id, defaults){
     const subjName = document.getElementById('fSubject2').value.trim();
     const subject = subjName ? getOrCreateSubject(subjName) : null;
     const classId = existing ? existing.classId : defaults.classId;
+    const calRowVisible = document.getElementById('fCalRow').style.display !== 'none';
+    const wantCal = type==='exam' && calRowVisible && document.getElementById('fExamToCalendar').checked;
+    let itemRef;
     if(existing){
       Object.assign(existing, {type, title, date, time, notes, remindDays, subjectId: subject?subject.id:null});
+      itemRef = existing;
     } else {
-      state.items.push({ id:uid(), type, title, date, time, notes, remindDays, subjectId: subject?subject.id:null, classId, notified:false });
+      itemRef = { id:uid(), type, title, date, time, notes, remindDays, subjectId: subject?subject.id:null, classId, notified:false };
+      state.items.push(itemRef);
     }
     saveState(); closeModal(); render();
+    if(wantCal || itemRef.calendarExamText) calendarSyncExam(itemRef, wantCal);
     if(defaults.afterSave) defaults.afterSave();
     toast('Guardado');
   };
@@ -3072,6 +3099,7 @@ function openItemModal(id, defaults){
     document.getElementById('fDelete').onclick=()=>{
       state.items = state.items.filter(i=>i.id!==existing.id);
       saveState(); closeModal(); render();
+      if(existing.calendarExamText) calendarSyncExam(existing, false);
       if(defaults.afterSave) defaults.afterSave();
       toast('Eliminado');
     };
@@ -3948,6 +3976,65 @@ async function pushDeberesToCalendar(subjectId, dateIso, cls, deberesText, itemR
   }
 }
 
+/* ---------- Exámenes en el calendario de la clase ----------
+   Igual que los deberes: el texto del examen se escribe en la descripción del evento de la
+   clase de ese día y hora (el examen siempre se hace en hora de clase). Los días de examen
+   no hay deberes, así que no se mezclan. */
+function examText(item){
+  const t = (item.title||'').trim();
+  return item.notes && item.notes.trim() ? t + '\n' + item.notes.trim() : t;
+}
+function classSlotOnDate(subjectId, dateIso, fallbackClassId){
+  const dow = dowIndexISO(dateIso);
+  return state.classes.find(c=>c.subjectId===subjectId && Array.isArray(c.days) && c.days.includes(dow) && classActiveOnDate(c, dateIso))
+    || state.classes.find(c=>c.id===fallbackClassId) || null;
+}
+/* Escribe (o borra, con text '') la descripción del evento de la clase de ese día.
+   Si expectedOld se indica, solo toca el evento si su descripción sigue siendo ese texto. */
+async function calendarSetExamDescription(subjectId, dateIso, classId, text, expectedOld){
+  const subj = getSubject(subjectId);
+  if(!subj || !subj.calendarId) return { ok:false, detail:'Esta clase no tiene calendario vinculado.' };
+  const cls = classSlotOnDate(subjectId, dateIso, classId);
+  if(!cls) return { ok:false, detail:'No hay ningún tramo horario de esta clase ese día.' };
+  const token = await driveGetToken(false);
+  const event = await calendarFindEventForSlot(token, subj.calendarId, dateIso, cls.start, cls.end);
+  if(!event) return { ok:false, detail:'No se encontró ningún evento en el calendario para ese día y hora. ¿Ya está creado el hueco de esa clase?' };
+  if(expectedOld!==undefined && (event.description||'').trim() !== expectedOld.trim()) return { ok:true, skipped:true };
+  await calendarUpdateEventDescription(token, subj.calendarId, event.id, text);
+  return { ok:true };
+}
+async function calendarSyncExam(item, wantCalendar){
+  if(!driveConfigured() || !driveIsConnected()){
+    if(wantCalendar) toast('Conecta Google Drive/Calendar en Ajustes para apuntar el examen en el calendario');
+    return;
+  }
+  try{
+    let msg = '';
+    // Si ya se había escrito antes en otro día/clase, o se quita, borrar lo anterior
+    if(item.calendarExamText){
+      const sameSlot = wantCalendar && item.calendarExamDate===item.date && item.calendarExamSubject===item.subjectId;
+      if(!sameSlot){
+        const r = await calendarSetExamDescription(item.calendarExamSubject, item.calendarExamDate, item.classId, '', item.calendarExamText);
+        if(r.ok && !r.skipped) msg = 'Examen quitado del calendario de Google';
+        delete item.calendarExamText; delete item.calendarExamDate; delete item.calendarExamSubject;
+      }
+    }
+    if(wantCalendar){
+      const text = examText(item);
+      const r = await calendarSetExamDescription(item.subjectId, item.date, item.classId, text);
+      if(!r.ok){ toast(r.detail); }
+      else {
+        item.calendarExamText = text; item.calendarExamDate = item.date; item.calendarExamSubject = item.subjectId;
+        msg = 'Examen apuntado también en el calendario de Google';
+      }
+    }
+    if(state.items.includes(item)) saveState();
+    if(msg) toast(msg);
+  }catch(e){
+    toast('No se pudo actualizar el calendario: ' + e.message);
+  }
+}
+
 /* ---------- Sincronización completa (bidireccional) de deberes ya existentes ---------- */
 function dowIndexISO(dateIso){ return mondayIndex(parseISO(dateIso)); }
 
@@ -4005,7 +4092,7 @@ async function syncDeberesBidirectional(subjectId, from, to, opts){
     events = (data.items||[]).filter(ev=>ev.start && ev.start.dateTime);
   }catch(e){ if(!silent) toast('No se pudo leer el calendario: '+e.message); return null; }
 
-  let pushed=0, pulled=0, pulledDeletes=0;
+  let pushed=0, pulled=0, pulledDeletes=0, examsPushed=0;
   const conflicts = [];
   const patches = []; // { eventId, description, appItem }
 
@@ -4022,6 +4109,14 @@ async function syncDeberesBidirectional(subjectId, from, to, opts){
         const evStartMin = evStart.getHours()*60+evStart.getMinutes(), evEndMin = evEnd.getHours()*60+evEnd.getMinutes();
         return evStartMin < wantEnd && evEndMin > wantStart;
       });
+      // Día de examen: no hay deberes. Se escribe el examen en el evento (si está vacío) y se ignora lo demás.
+      const examItem = state.items.find(i=>i.type==='exam' && i.subjectId===subjectId && i.date===d && (i.classId?i.classId===slot.id:true));
+      if(examItem){
+        if(match && !(match.description||'').trim()){
+          patches.push({ eventId: match.id, description: examText(examItem), appItem: null, exam: examItem });
+        }
+        continue;
+      }
       const appItem = state.items.find(i=>i.type==='task' && i.kind==='deberes' && i.subjectId===subjectId && i.date===d && (i.classId?i.classId===slot.id:true));
       const appText = appItem ? (appItem.notes||appItem.title||'').trim() : '';
       const calText = match ? (match.description||'').trim() : '';
@@ -4046,6 +4141,7 @@ async function syncDeberesBidirectional(subjectId, from, to, opts){
       } else if(appText && calText && appText!==calText){
         conflicts.push(d);
       }
+
     }
   }
 
@@ -4053,12 +4149,13 @@ async function syncDeberesBidirectional(subjectId, from, to, opts){
     try{
       await calendarUpdateEventDescription(token, subj.calendarId, p.eventId, p.description);
       if(p.appItem) p.appItem.calendarSyncedText = p.description;
+      if(p.exam){ p.exam.calendarExamText = p.description; p.exam.calendarExamDate = p.exam.date; p.exam.calendarExamSubject = p.exam.subjectId; examsPushed++; }
     }catch(e){}
   }
-  if(pulled>0 || pulledDeletes>0) saveState();
+  if(pulled>0 || pulledDeletes>0 || examsPushed>0) saveState();
   render();
 
-  const result = { pushed, pulled, pulledDeletes, conflicts };
+  const result = { pushed, pulled, pulledDeletes, conflicts, examsPushed };
   if(silent) return result;
 
   openModal(`
@@ -4068,6 +4165,7 @@ async function syncDeberesBidirectional(subjectId, from, to, opts){
       <b>${pushed}</b> deberes de la app escritos en el calendario.<br>
       <b>${pulled}</b> deberes del calendario traídos a la app.<br>
       <b>${pulledDeletes}</b> deberes borrados en la app porque se habían borrado en el calendario.<br>
+      <b>${examsPushed}</b> examen(es) de la app escritos en el calendario.<br>
       ${conflicts.length ? `<b>${conflicts.length}</b> día(s) con contenido distinto en ambos sitios (no tocados): ${conflicts.map(d=>parseISO(d).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'})).join(', ')}` : 'Sin conflictos.'}
     </p>
     <button class="btn btn-primary" id="syncDone">Aceptar</button>
