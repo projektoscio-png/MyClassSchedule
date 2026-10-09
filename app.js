@@ -11,7 +11,7 @@ const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
 const DRIVE_BACKUPS_KEEP = 40; // valor por defecto; se puede cambiar en Ajustes (state.settings.backupsKeep)
 function driveBackupsKeep(){ const n = Number(state && state.settings && state.settings.backupsKeep); return (n>=1 && n<=500) ? Math.floor(n) : DRIVE_BACKUPS_KEEP; }
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-105';
+const APP_VERSION = '2026-08-22-106';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -230,6 +230,16 @@ function renderHeader(){
   const d = new Date();
   document.getElementById('dateToday').textContent = d.toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'long'});
   document.getElementById('fabBtn').style.display = ui.tab==='settings' ? 'none':'flex';
+  updateCloseBtn();
+}
+/* Botón "Cerrar y sincronizar" de la barra superior (solo en el calendario y con Drive conectado) */
+function updateCloseBtn(){
+  const b = document.getElementById('closeSyncBtn');
+  if(!b) return;
+  const show = ui.tab==='calendar' && driveConfigured() && driveIsConnected();
+  b.style.display = show ? 'flex' : 'none';
+  const dot = document.getElementById('closeSyncDot');
+  if(dot) dot.style.display = (show && driveIsDirty()) ? 'block' : 'none';
 }
 
 
@@ -2505,6 +2515,7 @@ function updateNotifBellIcon(){
   btn.style.opacity = enabled ? '1' : '0.5';
 }
 
+document.getElementById('closeSyncBtn').onclick = ()=>driveCloseFlow();
 document.getElementById('notifBtn').onclick = ()=>{
   const notifState = ('Notification' in window) ? Notification.permission : 'unsupported';
   if(notifState==='denied'){ toast('Notificaciones bloqueadas en el navegador. Actívalas desde sus ajustes.'); return; }
@@ -4335,6 +4346,7 @@ function renderInstallHint(){
 }
 
 function renderDriveHint(){
+  updateCloseBtn();
   const wrap = document.getElementById('driveHintWrap');
   if(!wrap) return;
   const show = driveConfigured() && driveIsConnected() && localStorage.getItem('driveNeedsReconnect');
