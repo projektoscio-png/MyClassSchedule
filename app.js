@@ -11,7 +11,7 @@ const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
 const DRIVE_BACKUPS_KEEP = 40; // valor por defecto; se puede cambiar en Ajustes (state.settings.backupsKeep)
 function driveBackupsKeep(){ const n = Number(state && state.settings && state.settings.backupsKeep); return (n>=1 && n<=500) ? Math.floor(n) : DRIVE_BACKUPS_KEEP; }
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-103';
+const APP_VERSION = '2026-08-22-104';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -2136,6 +2136,14 @@ function renderHolidays(){
         <div class="settings-desc">Comprueba si hay cambios nuevos en Drive</div>
       </div>
       <button class="settings-action" id="btnDriveSyncNow">Sincronizar</button>
+    </div>    <div style="height:1px;background:var(--line)"></div>
+    <div class="settings-item">
+      <div class="settings-icon">${ICONS.cloud}</div>
+      <div class="settings-text">
+        <div class="settings-title">Copias automáticas a conservar en Drive</div>
+        <div class="settings-desc">Se guardan las más recientes y se borran las más antiguas. Las que guardas tú con Exportar nunca se borran solas.</div>
+      </div>
+      <input type="number" id="inpBackupsKeep" min="1" max="500" value="${driveBackupsKeep()}" style="width:68px;text-align:center;padding:8px 6px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font-size:15px;">
     </div>` : ''}
   </div>
   <div class="card">
@@ -2167,15 +2175,6 @@ function renderHolidays(){
       <button class="settings-action" id="btnImport">Importar</button>
       <input type="file" id="fileImport" accept=".json,application/json,.sqlite,.db,.sqlite3,application/octet-stream,application/vnd.sqlite3,application/x-sqlite3" style="display:none">
     </div>
-    ${driveConfigured() ? `<div style="height:1px;background:var(--line)"></div>
-    <div class="settings-item">
-      <div class="settings-icon">${ICONS.cloud}</div>
-      <div class="settings-text">
-        <div class="settings-title">Copias automáticas a conservar en Drive</div>
-        <div class="settings-desc">Se guardan las más recientes y se borran las más antiguas. Las que guardas tú con Exportar nunca se borran solas.</div>
-      </div>
-      <input type="number" id="inpBackupsKeep" min="1" max="500" value="${driveBackupsKeep()}" style="width:68px;text-align:center;padding:8px 6px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font-size:15px;">
-    </div>` : ''}
     <div style="height:1px;background:var(--line)"></div>
     <div class="settings-item">
       <div class="settings-icon">${ICONS.clipboard}</div>
