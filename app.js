@@ -11,7 +11,7 @@ const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
 const DRIVE_BACKUPS_KEEP = 40; // valor por defecto; se puede cambiar en Ajustes (state.settings.backupsKeep)
 function driveBackupsKeep(){ const n = Number(state && state.settings && state.settings.backupsKeep); return (n>=1 && n<=500) ? Math.floor(n) : DRIVE_BACKUPS_KEEP; }
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-106';
+const APP_VERSION = '2026-08-22-107';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -3533,6 +3533,8 @@ let driveTokenClient = null;
 let driveAccessToken = null;
 let driveTokenExpiry = 0;
 let driveSyncing = false;
+let driveSyncStartedAt = 0;
+let driveInteractiveBusy = false;
 let driveUploadTimer = null;
 
 // Recuperar el permiso guardado de una sesión anterior (si no ha caducado),
@@ -3562,6 +3564,7 @@ function waitForGoogleIdentity(timeoutMs){
   });
 }
 
+let _driveTokenReject = null;
 function driveEnsureTokenClient(){
   if(driveTokenClient) return driveTokenClient;
   if(typeof google==='undefined' || !google.accounts) return null;
@@ -3569,6 +3572,13 @@ function driveEnsureTokenClient(){
     client_id: GOOGLE_CLIENT_ID,
     scope: DRIVE_SCOPE,
     callback: '', // se sobreescribe en cada llamada
+    error_callback: (err)=>{
+      // Ventana cerrada o bloqueada: sin esto la petición se quedaba esperando para siempre
+      if(_driveTokenReject){
+        const r = _driveTokenReject; _driveTokenReject = null;
+        r(new Error(err && err.type==='popup_closed' ? 'Se cerró la ventana de Google antes de terminar' : 'No se pudo abrir la ventana de Google (puede estar bloqueada por el navegador)'));
+      }
+    },
   });
   return driveTokenClient;
 }
@@ -3584,7 +3594,11 @@ async function driveGetToken(silent){
     if(!client) throw new Error('No se pudo iniciar el inicio de sesión de Google.');
   }
   const request = (promptValue)=> new Promise((resolve, reject)=>{
+    const timer = setTimeout(()=>{ if(_driveTokenReject===rej){ _driveTokenReject=null; reject(new Error('Google no respondió. Inténtalo de nuevo.')); } }, 120000);
+    const rej = (e)=>{ clearTimeout(timer); reject(e); };
+    _driveTokenReject = rej;
     client.callback = (resp)=>{
+      clearTimeout(timer); _driveTokenReject = null;
       if(resp.error){ reject(new Error(resp.error)); return; }
       driveAccessToken = resp.access_token;
       driveTokenExpiry = Date.now() + (resp.expires_in||3600)*1000;
@@ -3851,7 +3865,8 @@ window.addEventListener('beforeunload', (e)=>{
 let _lastCloseAsk = 0;
 document.addEventListener('visibilitychange', ()=>{
   if(document.visibilityState==='hidden'){
-    if(driveIsDirty()) driveSyncUpload({showToast:false, interactive:false}); // último intento al salir
+    // Último intento al salir (no si hay ya una sincronización o un inicio de sesión de Google en marcha)
+    if(driveIsDirty() && !driveSyncing && !driveInteractiveBusy && (state.settings.lastModified||0) > Number(localStorage.getItem('driveLastSync')||0) - 1) driveSyncUpload({showToast:false, interactive:false});
   } else if(document.visibilityState==='visible'){
     // Vuelves a la app y aún hay algo sin subir (el envío automático ya debería haberse hecho)
     if(driveIsDirty() && (state.settings.lastModified||0) < Date.now()-10000 && Date.now()-_lastCloseAsk > 600000 && !driveSyncing){
@@ -3868,10 +3883,22 @@ async function driveSyncUpload(opts){
   opts = opts || {};
   const showToast = !!opts.showToast;
   const interactive = !!opts.interactive;
-  if(!driveConfigured() || !driveIsConnected() || driveSyncing) return;
+  if(!driveConfigured() || !driveIsConnected()){ if(interactive && showToast) toast('Google Drive no está conectado'); return; }
+  if(driveSyncing){
+    // Si hay una sincronización en marcha, esperamos. Pero si lleva demasiado tiempo (se quedó
+    // colgada, p. ej. una ventana de Google que no llegó a abrirse en el móvil), se retoma.
+    const dialogOpen = !!(document.getElementById('driveGuardDlg') || document.getElementById('driveCloseDlg'));
+    const stuck = Date.now() - driveSyncStartedAt > 45000 && !dialogOpen;
+    if(!(interactive && stuck)){
+      if(interactive && showToast) toast('Ya hay una sincronización en curso, espera un momento…');
+      return;
+    }
+  }
   if(interactive) driveUploadPaused = false;
   if(driveUploadPaused) return;
   driveSyncing = true;
+  driveSyncStartedAt = Date.now();
+  if(interactive) driveInteractiveBusy = true;
   try{
     const sentMod = state.settings.lastModified||0;
     const token = await driveGetToken(!interactive);
@@ -3883,6 +3910,7 @@ async function driveSyncUpload(opts){
       if(remoteModified > (state.settings.lastModified||0)){
         // Hay una versión más reciente en Drive: avisar en vez de sobreescribirla
         driveOfferRemoteUpdate(remoteData);
+        if(showToast) toast('Hay cambios más recientes en Drive. Pulsa «Actualizar» en el aviso para traerlos.');
         return;
       }
       if(!(await driveGuardOverwrite(token, remoteData))) return;
@@ -3901,6 +3929,7 @@ async function driveSyncUpload(opts){
     renderDriveHint(); // aviso siempre visible, sin recargar el contenido de la pestaña actual
   } finally {
     driveSyncing = false;
+    driveInteractiveBusy = false;
   }
 }
 
