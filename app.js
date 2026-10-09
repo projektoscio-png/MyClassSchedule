@@ -11,7 +11,7 @@ const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
 const DRIVE_BACKUPS_KEEP = 40; // valor por defecto; se puede cambiar en Ajustes (state.settings.backupsKeep)
 function driveBackupsKeep(){ const n = Number(state && state.settings && state.settings.backupsKeep); return (n>=1 && n<=500) ? Math.floor(n) : DRIVE_BACKUPS_KEEP; }
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-104';
+const APP_VERSION = '2026-08-22-105';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -2121,7 +2121,7 @@ function renderHolidays(){
           : driveIsConnected() ? (
               localStorage.getItem('driveNeedsReconnect')
                 ? '⚠️ Sesión caducada, pulsa Sincronizar para reconectar'
-                : ('Conectado' + (localStorage.getItem('driveLastSync') ? ' · última sync ' + fmtDateTime(Number(localStorage.getItem('driveLastSync'))) : ''))
+                : ('Conectado' + (localStorage.getItem('driveLastSync') ? ' · última sync ' + fmtDateTime(Number(localStorage.getItem('driveLastSync'))) : '') + (driveIsDirty() ? ' · ⚠️ cambios sin sincronizar' : ''))
             )
           : 'Mantén tus datos iguales entre dispositivos'
         }</div>
@@ -2144,6 +2144,15 @@ function renderHolidays(){
         <div class="settings-desc">Se guardan las más recientes y se borran las más antiguas. Las que guardas tú con Exportar nunca se borran solas.</div>
       </div>
       <input type="number" id="inpBackupsKeep" min="1" max="500" value="${driveBackupsKeep()}" style="width:68px;text-align:center;padding:8px 6px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);font-size:15px;">
+    </div>
+    <div style="height:1px;background:var(--line)"></div>
+    <div class="settings-item">
+      <div class="settings-icon">${ICONS.cloud}</div>
+      <div class="settings-text">
+        <div class="settings-title">Cerrar y sincronizar</div>
+        <div class="settings-desc">Si hay cambios sin subir a Drive, te pregunta antes de cerrar</div>
+      </div>
+      <button class="settings-action" id="btnDriveClose">Cerrar</button>
     </div>` : ''}
   </div>
   <div class="card">
@@ -2411,6 +2420,8 @@ function bindContentEvents(){
   if(btnExport) btnExport.onclick = ()=>{
     if(driveConfigured() && driveIsConnected()) openExportChoiceModal(); else exportData();
   };
+  const btnDriveClose = document.getElementById('btnDriveClose');
+  if(btnDriveClose) btnDriveClose.onclick = driveCloseFlow;
   const inpBackupsKeep = document.getElementById('inpBackupsKeep');
   if(inpBackupsKeep) inpBackupsKeep.onchange = ()=>{
     let n = Math.floor(Number(inpBackupsKeep.value));
@@ -3327,6 +3338,7 @@ function confirmImportPreview(parsed, sourceLabel, opts){
       // ni reprogramar una nueva subida (si no, entraría en un bucle subir-bajar-subir).
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       localStorage.setItem('driveLastSync', String(Date.now()));
+      driveMarkSynced();
     } else {
       saveState();
     }
@@ -3780,6 +3792,66 @@ async function driveUpload(token, fileId, payload, fileName){
   }
 }
 
+/* ---------- Cambios sin sincronizar y cierre de la app ----------
+   Se anota la "versión" (fecha de última modificación) que quedó igual que Drive. Si la
+   versión actual es distinta, hay cambios que aún no están en Drive. */
+function driveMarkSynced(mod){ try{ localStorage.setItem('driveSyncedMod', String(mod!=null ? mod : (state.settings.lastModified||0))); }catch(e){} }
+function driveIsDirty(){
+  if(!driveConfigured() || !driveIsConnected()) return false;
+  return String(state.settings.lastModified||0) !== (localStorage.getItem('driveSyncedMod')||'');
+}
+function driveAskSyncDialog(){
+  return new Promise(resolve=>{
+    const old = document.getElementById('driveCloseDlg'); if(old) old.remove();
+    const last = Number(localStorage.getItem('driveLastSync')||0);
+    const o = document.createElement('div');
+    o.id = 'driveCloseDlg';
+    o.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px;';
+    o.innerHTML = `<div style="background:var(--card,#fff);color:var(--ink,#222);border-radius:16px;max-width:400px;width:100%;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.3);">
+      <div style="font-weight:700;font-size:16px;margin-bottom:8px">☁️ Hay cambios sin sincronizar</div>
+      <div style="font-size:13.5px;line-height:1.5;color:var(--ink-soft,#555)">Lo que tienes ahora en este dispositivo es distinto de la copia de Google Drive${last?' (última sincronización: '+fmtDateTime(last)+')':''}.<br><br>¿Quieres sincronizar Drive con el estado actual?</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">
+        <button class="btn btn-primary" data-c="sync" style="margin:0">Sí, sincronizar ahora</button>
+        <button class="btn btn-ghost" data-c="skip" style="margin:0">No, dejar Drive como está</button>
+        <button class="btn btn-ghost" data-c="cancel" style="margin:0">Cancelar</button>
+      </div></div>`;
+    document.body.appendChild(o);
+    o.querySelectorAll('button[data-c]').forEach(b=>b.onclick=()=>{ o.remove(); resolve(b.dataset.c); });
+  });
+}
+/* Flujo de "cerrar": si no hay cambios, se cierra con normalidad; si los hay, se pregunta. */
+async function driveCloseFlow(){
+  let proceed = true;
+  if(driveIsDirty()){
+    const c = await driveAskSyncDialog();
+    if(c==='cancel') return;
+    if(c==='sync'){
+      await driveSyncUpload({showToast:false, interactive:true});
+      if(driveIsDirty()){ toast('No se pudo sincronizar del todo. Revisa Drive antes de cerrar.'); return; }
+      toast('Sincronizado con Google Drive');
+    }
+  }
+  if(proceed){ try{ window.close(); }catch(e){} toast('Ya puedes cerrar la app'); }
+}
+// Red de seguridad: al salir o al volver a la app, si quedó algo sin subir
+window.addEventListener('beforeunload', (e)=>{
+  if(driveIsDirty() && (state.settings.lastModified||0) < Date.now()-8000){ e.preventDefault(); e.returnValue = ''; }
+});
+let _lastCloseAsk = 0;
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState==='hidden'){
+    if(driveIsDirty()) driveSyncUpload({showToast:false, interactive:false}); // último intento al salir
+  } else if(document.visibilityState==='visible'){
+    // Vuelves a la app y aún hay algo sin subir (el envío automático ya debería haberse hecho)
+    if(driveIsDirty() && (state.settings.lastModified||0) < Date.now()-10000 && Date.now()-_lastCloseAsk > 600000 && !driveSyncing){
+      _lastCloseAsk = Date.now();
+      driveAskSyncDialog().then(async c=>{
+        if(c==='sync'){ await driveSyncUpload({showToast:true, interactive:true}); }
+      });
+    }
+  }
+});
+
 /* Sube los datos locales a Drive si son más nuevos que los remotos (o no hay copia aún). */
 async function driveSyncUpload(opts){
   opts = opts || {};
@@ -3790,6 +3862,7 @@ async function driveSyncUpload(opts){
   if(driveUploadPaused) return;
   driveSyncing = true;
   try{
+    const sentMod = state.settings.lastModified||0;
     const token = await driveGetToken(!interactive);
     localStorage.removeItem('driveNeedsReconnect');
     const remote = await driveFindFile(token);
@@ -3808,6 +3881,7 @@ async function driveSyncUpload(opts){
       await driveUpload(token, null, state);
     }
     localStorage.setItem('driveLastSync', String(Date.now()));
+    driveMarkSynced(sentMod);
     if(showToast) toast('Sincronizado con Google Drive');
     renderDriveHint(); // aviso siempre visible, sin recargar el contenido de la pestaña actual
   }catch(e){
@@ -3893,10 +3967,13 @@ async function driveCheckOnLoad(onSafeToSync){
           try{ await driveSaveBackup(token, remoteData, 'drive'); localStorage.setItem('driveLastBackupMod', String(remoteModified)); }
           catch(e){ console.log('[MiHorario/Drive] No se pudo guardar la copia de seguridad (se sube igualmente):', e.message); }
         }
+        const sentMod = state.settings.lastModified||0;
         await driveUpload(token, remote.id, state);
         localStorage.setItem('driveLastSync', String(Date.now()));
+        driveMarkSynced(sentMod);
       } else {
         console.log('[MiHorario/Drive] Están igual, nada que hacer.');
+        driveMarkSynced();
       }
       if(onSafeToSync) onSafeToSync();
     }
