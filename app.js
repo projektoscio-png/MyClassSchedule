@@ -11,7 +11,7 @@ const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
 const DRIVE_BACKUPS_KEEP = 40; // valor por defecto; se puede cambiar en Ajustes (state.settings.backupsKeep)
 function driveBackupsKeep(){ const n = Number(state && state.settings && state.settings.backupsKeep); return (n>=1 && n<=500) ? Math.floor(n) : DRIVE_BACKUPS_KEEP; }
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-112';
+const APP_VERSION = '2026-08-22-113';
 // ===== i18n: idioma de la interfaz (es por defecto; ca = català, traducción en tiempo de ejecución) =====
 const LANG = (()=>{ try{ return localStorage.getItem('miHorarioLang')==='ca' ? 'ca' : 'es'; }catch(e){ return 'es'; } })();
 const LOCALE = LANG==='ca' ? 'ca-ES' : 'es-ES';
@@ -3510,8 +3510,8 @@ function openTranslationsEditor(){
   openModal(`
     <div class="modal-head"><div class="modal-title" data-notr>Editar traduccions</div>
       <button class="icon-btn" id="trClose" style="background:var(--bg);color:var(--ink-soft)">${ICONS.x}</button></div>
-    <input type="text" id="trSearch" data-notr placeholder="Cerca (castellà o català)…" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:8px;margin-bottom:8px">
-    <div id="trList" style="max-height:55vh;overflow:auto"></div>
+    <input type="text" id="trSearch" data-notr placeholder="Cerca (castellà o català)…" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:8px;margin-bottom:8px;position:sticky;top:-18px;z-index:2;background:var(--paper)">
+    <div id="trList"></div>
     <button class="btn btn-ghost" id="trReset" data-notr style="margin:8px 0 0">Restaurar totes les traduccions originals</button>
     <div style="font-size:12px;color:var(--ink-soft);margin-top:8px" data-notr>Els canvis s'apliquen en tancar. Els {} són els valors que posa l'app: deixa'ls al mateix lloc.</div>
   `);
@@ -3519,7 +3519,7 @@ function openTranslationsEditor(){
   const draw = ()=>{
     const q = document.getElementById('trSearch').value.trim().toLowerCase();
     const rows = keys.filter(k=>!q || k.toLowerCase().includes(q) || (ov[k]||base[k]).toLowerCase().includes(q)).slice(0,40);
-    list.innerHTML = rows.map((k,i)=>`<div data-notr style="margin-bottom:10px"><div style="font-size:12px;color:var(--ink-soft)">${esc2(k)}</div><textarea data-k="${i}" rows="2" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid ${ov[k]!=null?'#E76F51':'#ccc'};border-radius:8px;font:inherit">${esc2(ov[k]!=null?ov[k]:base[k])}</textarea></div>`).join('') || '<div data-notr style="color:var(--ink-soft)">Cap resultat</div>';
+    list.innerHTML = rows.map((k,i)=>`<div data-notr style="margin-bottom:10px"><div style="font-size:12px;color:var(--ink-soft)">${esc2(k)}</div><textarea data-k="${i}" rows="2" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid ${ov[k]!=null?'#E76F51':'#ccc'};border-radius:8px;font:inherit;overflow:hidden;resize:none;touch-action:pan-y">${esc2(ov[k]!=null?ov[k]:base[k])}</textarea></div>`).join('') || '<div data-notr style="color:var(--ink-soft)">Cap resultat</div>';
     list.querySelectorAll('textarea').forEach(t=>{
       const k = rows[+t.dataset.k];
       t.onchange = ()=>{
