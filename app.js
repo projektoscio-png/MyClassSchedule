@@ -11,7 +11,7 @@ const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
 const DRIVE_BACKUPS_KEEP = 40; // valor por defecto; se puede cambiar en Ajustes (state.settings.backupsKeep)
 function driveBackupsKeep(){ const n = Number(state && state.settings && state.settings.backupsKeep); return (n>=1 && n<=500) ? Math.floor(n) : DRIVE_BACKUPS_KEEP; }
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-107';
+const APP_VERSION = '2026-08-22-108';
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DOW_SHORT = ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
@@ -600,6 +600,7 @@ function openSubjectDetailModal(subjectId){
       <input type="file" id="photosZipInput" accept=".zip,application/zip" style="display:none">
     </div>
     <button class="btn btn-primary" id="btnDailyRecord" ${students.length===0?'disabled style="opacity:.5;cursor:default;"':''}>${ICONS.clipboard} Registro diario de esta clase</button>
+    <button class="btn btn-ghost" id="btnLavaboSummary" style="margin-top:8px;" ${students.length===0?'disabled style="opacity:.5;cursor:default;margin-top:8px;"':''}>🚻 Resumen de lavabo</button>
     <button class="btn btn-ghost" id="btnExportRecord" style="margin-top:8px;" ${students.length===0?'disabled style="opacity:.5;cursor:default;margin-top:8px;"':''}>${ICONS.download} Exportar registro a Excel</button>
     <div style="height:1px;background:var(--line);margin:16px 0;"></div>
     <button class="btn btn-ghost" id="btnViewSubjTasks2">${ICONS.clipboard} Ver tareas de esta clase</button>
@@ -660,6 +661,8 @@ function openSubjectDetailModal(subjectId){
   if(students.length){
     btnDaily.onclick=()=>{ closeModal(); openDailyRecordScreen(subjectId, todayISO(), students[0].id); };
   }
+  const btnLavaboSummary = document.getElementById('btnLavaboSummary');
+  if(students.length){ btnLavaboSummary.onclick=()=>openLavaboSummaryModal(subjectId); }
   const btnExport = document.getElementById('btnExportRecord');
   if(students.length){
     btnExport.onclick=()=>openExportRangeModal(subjectId);
@@ -1197,7 +1200,7 @@ function getOrCreateRecord(studentId, dateIso){
   return rec;
 }
 function persistRecord(rec){
-  const isEmpty = rec.assistencia.length===0 && !rec.actitud && !rec.actitudNota.trim() && rec.deures==null && rec.participacio==null && rec.gestio==null;
+  const isEmpty = rec.assistencia.length===0 && !rec.actitud && !rec.actitudNota.trim() && rec.deures==null && rec.participacio==null && rec.gestio==null && !rec.lavabo;
   const idx = state.records.findIndex(r=>r.id===rec.id);
   if(isEmpty){
     if(idx>=0) state.records.splice(idx,1);
@@ -1208,6 +1211,104 @@ function persistRecord(rec){
     state.records.push(rec);
   }
   saveState();
+}
+
+/* ==================================================================
+   LAVABO: control de las salidas al lavabo.
+   Regla: tras ir 2 clases seguidas, hay que estar 2 clases sin ir.
+   Las clases en que el alumno estuvo ausente (F/J/E) o exento no cuentan.
+   ================================================================== */
+const LAVABO_MAX_SEGUIDAS = 2;   // veces seguidas permitidas
+const LAVABO_ESPERA = 2;         // clases sin ir después de agotarlas
+
+/* Fechas de clase de la asignatura entre from (incluida) y to (excluida). */
+function subjectSessionDates(subjectId, fromIso, toIso){
+  const slots = state.classes.filter(c=>c.subjectId===subjectId);
+  const out = [];
+  for(let d=fromIso; d<toIso; d=addDaysISO(d,1)){
+    if(holidayForDate(d)) continue;
+    const dow = mondayIndex(parseISO(d));
+    if(slots.some(c=>Array.isArray(c.days) && c.days.includes(dow) && classActiveOnDate(c,d))) out.push(d);
+  }
+  return out;
+}
+
+/* Estado del alumno ANTES de la clase de dateIso (según las clases anteriores).
+   Devuelve { cooldown, row, hist, total, todayVisited, violations }.
+   hist: una marca por clase desde la primera salida: 'V' fue, 'W' fue estando en espera,
+   '-' no fue, 'a' ausente/exento. */
+function lavaboStatus(student, dateIso){
+  const recs = state.records.filter(r=>r.studentId===student.id);
+  const byDate = {}; recs.forEach(r=>{ byDate[r.date]=r; });
+  const visits = recs.filter(r=>r.lavabo).map(r=>r.date).sort();
+  const res = { cooldown:0, row:0, hist:[], total:visits.length, todayVisited: !!(byDate[dateIso] && byDate[dateIso].lavabo), violations:0 };
+  const first = visits[0];
+  if(!first || first>=dateIso) return res;
+  const set = new Set(subjectSessionDates(student.subjectId, first, dateIso));
+  visits.forEach(d=>{ if(d<dateIso) set.add(d); });
+  const dates = [...set].sort();
+  let cooldown = 0, row = 0;
+  for(const d of dates){
+    const r = byDate[d];
+    const went = !!(r && r.lavabo);
+    const absent = !went && ((r && r.assistencia && r.assistencia.some(a=>a==='F'||a==='J'||a==='E')) || isStudentExemptOn(student, d));
+    if(absent){ res.hist.push('a'); continue; }
+    if(went){
+      if(cooldown>0){ res.violations++; res.hist.push('W'); cooldown = LAVABO_ESPERA; row = 0; }
+      else { res.hist.push('V'); row++; if(row>=LAVABO_MAX_SEGUIDAS){ cooldown = LAVABO_ESPERA; row = 0; } }
+    } else {
+      res.hist.push('-'); if(cooldown>0) cooldown--; row = 0;
+    }
+  }
+  res.cooldown = cooldown; res.row = row;
+  return res;
+}
+
+function lavaboHistHtml(hist, n){
+  const sym = { V:'🚻', W:'⚠️', '-':'·', a:'✕' };
+  const last = hist.slice(-n);
+  return last.length ? last.map(h=>`<span style="display:inline-block;min-width:16px;text-align:center;">${sym[h]}</span>`).join('') : '—';
+}
+
+/* Texto/color del estado para la pantalla de registro diario. */
+function lavaboStatusInfo(st){
+  if(st.cooldown>0){
+    return { color:'#d64545', text: `EN ESPERA: le ${st.cooldown===1?'falta 1 clase':'faltan '+st.cooldown+' clases'} sin ir` };
+  }
+  if(st.row>=1){
+    return { color:'#b8860b', text: `Ha ido en la clase anterior: puede ir ${LAVABO_MAX_SEGUIDAS-st.row} vez más` };
+  }
+  return { color:'#1a9e5c', text:'Puede ir (sin restricción)' };
+}
+
+/* Resumen por clase: quién va más al lavabo. */
+function openLavaboSummaryModal(subjectId){
+  const subj = getSubject(subjectId);
+  const roster = state.students.filter(s=>s.subjectId===subjectId);
+  const tomorrow = addDaysISO(todayISO(), 1);
+  const rows = roster.map(s=>{
+    const st = lavaboStatus(s, tomorrow);
+    const last10 = st.hist.slice(-10).filter(h=>h==='V'||h==='W').length;
+    return { s, st, last10 };
+  }).filter(r=>r.st.total>0).sort((a,b)=> b.last10-a.last10 || b.st.total-a.st.total || a.s.name.localeCompare(b.s.name,'es'));
+  const never = roster.length - rows.length;
+  openModal(`
+    <div class="modal-head"><div class="modal-title">🚻 Lavabo · ${escapeHtml(subj?subj.name:'')}</div>
+      <button class="icon-btn" style="background:var(--bg);color:var(--ink-soft)" onclick="closeModal()">${ICONS.x}</button></div>
+    <p style="font-size:12.5px;color:var(--ink-soft);line-height:1.5;margin:0 0 10px;">Regla: tras ir 2 clases seguidas, 2 clases sin ir. 🚻 fue · ⚠️ fue estando en espera · · no fue · ✕ ausente.</p>
+    ${rows.length ? rows.map(r=>{
+      const info = lavaboStatusInfo(r.st);
+      return `<div style="padding:9px 0;border-bottom:1px solid var(--line);">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;">
+          <div style="font-weight:700;font-size:13.5px;">${escapeHtml(r.s.name)}</div>
+          <div style="font-size:12px;color:var(--ink-soft);white-space:nowrap;">${r.last10} en las últimas 10 · ${r.st.total} en total${r.st.violations?` · ⚠️${r.st.violations}`:''}</div>
+        </div>
+        <div style="font-size:12px;margin-top:3px;color:${info.color};font-weight:700;">${info.text}</div>
+        <div style="font-size:13px;margin-top:2px;letter-spacing:1px;">${lavaboHistHtml(r.st.hist, 12)}</div>
+      </div>`;
+    }).join('') : '<div style="font-size:13.5px;color:var(--ink-soft);padding:8px 0;">Todavía no hay ninguna salida al lavabo anotada en esta clase.</div>'}
+    ${rows.length && never>0 ? `<div style="font-size:12px;color:var(--ink-faint);margin-top:10px;">${never} alumno${never===1?'':'s'} sin ninguna salida anotada.</div>` : ''}
+  `);
 }
 
 /* ==================================================================
@@ -1852,6 +1953,11 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
       <label>Gestió</label>
       ${chipRow('drGestio', ['0','1','2'], isExempt ? '0' : (rec.gestio==null?'':String(rec.gestio)), false)}
     </div>
+    <div class="dr-field">
+      <label>🚻 Lavabo</label>
+      ${chipRow('drLavabo', [{v:'1', label:'Ha ido al lavabo', title:'Marcar si ha salido al lavabo en esta clase'}], rec.lavabo?'1':'', false)}
+      <div id="drLavaboInfo" style="margin-top:6px;font-size:12px;line-height:1.5;"></div>
+    </div>
   `);
 
   document.getElementById('drBackToClass').onclick=()=>{ closeModal(); openSubjectDetailModal(subjectId); };
@@ -1939,6 +2045,24 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
       };
     });
   }
+  const lavaboSt = lavaboStatus(student, dateIso);
+  function paintLavaboInfo(){
+    const info = lavaboStatusInfo(lavaboSt);
+    const wentToday = !!rec.lavabo;
+    const warn = wentToday && lavaboSt.cooldown>0 ? `<div style="color:#d64545;font-weight:800;">⚠️ Ha ido hoy estando en espera</div>` : '';
+    document.getElementById('drLavaboInfo').innerHTML =
+      `<div style="color:${info.color};font-weight:700;">${info.text}</div>${warn}` +
+      `<div style="color:var(--ink-soft);margin-top:2px;">Clases anteriores: <span style="letter-spacing:1px;">${lavaboHistHtml(lavaboSt.hist, 8)}</span> · ${lavaboSt.total + (wentToday && !lavaboSt.todayVisited ? 1 : 0) - (!wentToday && lavaboSt.todayVisited ? 1 : 0)} en total</div>`;
+  }
+  paintLavaboInfo();
+  document.querySelectorAll('#drLavabo button').forEach(b=>{
+    b.onclick=()=>{
+      rec.lavabo = !rec.lavabo;
+      b.classList.toggle('active', !!rec.lavabo);
+      persistRecord(rec);
+      paintLavaboInfo();
+    };
+  });
   wireSingleNumeric('drDeures','deures');
   wireSingleNumeric('drPart','participacio');
   wireSingleNumeric('drGestio','gestio');
