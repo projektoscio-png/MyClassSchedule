@@ -11,7 +11,7 @@ const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
 const DRIVE_BACKUPS_KEEP = 40; // valor por defecto; se puede cambiar en Ajustes (state.settings.backupsKeep)
 function driveBackupsKeep(){ const n = Number(state && state.settings && state.settings.backupsKeep); return (n>=1 && n<=500) ? Math.floor(n) : DRIVE_BACKUPS_KEEP; }
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-111';
+const APP_VERSION = '2026-08-22-112';
 // ===== i18n: idioma de la interfaz (es por defecto; ca = català, traducción en tiempo de ejecución) =====
 const LANG = (()=>{ try{ return localStorage.getItem('miHorarioLang')==='ca' ? 'ca' : 'es'; }catch(e){ return 'es'; } })();
 const LOCALE = LANG==='ca' ? 'ca-ES' : 'es-ES';
