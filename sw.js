@@ -1,5 +1,5 @@
-const CACHE = 'mihorario-v2';
-const FILES = ['./', './index.html', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = 'mihorario-v3';
+const FILES = ['./', './index.html', './app.js','./i18n-ca.js', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).catch(()=>{}));

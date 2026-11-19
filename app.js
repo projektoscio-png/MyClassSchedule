@@ -11,9 +11,113 @@ const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
 const DRIVE_BACKUPS_KEEP = 40; // valor por defecto; se puede cambiar en Ajustes (state.settings.backupsKeep)
 function driveBackupsKeep(){ const n = Number(state && state.settings && state.settings.backupsKeep); return (n>=1 && n<=500) ? Math.floor(n) : DRIVE_BACKUPS_KEEP; }
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-108';
+const APP_VERSION = '2026-08-22-110';
+// ===== i18n: idioma de la interfaz (es por defecto; ca = català, traducción en tiempo de ejecución) =====
+const LANG = (()=>{ try{ return localStorage.getItem('miHorarioLang')==='ca' ? 'ca' : 'es'; }catch(e){ return 'es'; } })();
+const LOCALE = LANG==='ca' ? 'ca-ES' : 'es-ES';
+(function i18nSetup(){
+  if(LANG!=='ca' || !window.I18N_CA) return;
+  document.documentElement.lang = 'ca';
+  const norm = s => String(s).replace(/\s+/g,' ').trim();
+  const dict = new Map(); const pats = [];
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  let OV = {}; try{ OV = JSON.parse(localStorage.getItem('miHorarioI18nOv')||'{}')||{}; }catch(e){}
+  const BASE = Object.assign({}, window.I18N_CA, OV);
+  const SRC = Object.assign({}, BASE);
+  // variantes sin el {} inicial/final (cuando ese hueco es un icono u otro elemento aparte)
+  Object.keys(BASE).forEach(k=>{
+    const v = BASE[k];
+    if(k.startsWith('{} ') && v.startsWith('{} ')){ const k2=k.slice(3); if(!(k2 in SRC)) SRC[k2]=v.slice(3); }
+    if(k.endsWith(' {}') && v.endsWith(' {}')){ const k2=k.slice(0,-3); if(!(k2 in SRC)) SRC[k2]=v.slice(0,-3); }
+  });
+  Object.keys(SRC).forEach(k=>{
+    const v = SRC[k];
+    if(k.indexOf('{}')<0){ dict.set(k,v); return; }
+    const parts = k.split('{}');
+    const lit = parts.join('').trim();
+    if(!lit) return;
+    const re = new RegExp('^'+parts.map(esc).join('(.*?)')+'$','s');
+    pats.push({re, v, n:parts.length-1, len:lit.length});
+  });
+  pats.sort((a,b)=>b.len-a.len);
+  const tcache = new Map();
+  function tr(text){
+    const n = norm(text);
+    if(!n) return null;
+    if(tcache.has(n)) return tcache.get(n);
+    let out = null;
+    if(dict.has(n)) out = dict.get(n);
+    else {
+      for(const p of pats){
+        const m = p.re.exec(n);
+        if(!m) continue;
+        let i = 0;
+        out = p.v.replace(/\{\}/g, ()=>{ const g = m[++i]; const t = tr(g); return t==null ? g : t; });
+        break;
+      }
+    }
+    if(tcache.size>3000) tcache.clear();
+    tcache.set(n,out);
+    return out;
+  }
+  function trWs(text){
+    const t = tr(text);
+    if(t==null) return null;
+    const lead = (text.match(/^\s*/)||[''])[0], trail = (text.match(/\s*$/)||[''])[0];
+    return lead + t + trail;
+  }
+  window.__tr = s => { const r = trWs(String(s)); return r==null ? s : r; };
+  const SKIP = {SCRIPT:1,STYLE:1,TEXTAREA:1,INPUT:1,SELECT:0};
+  const ATTRS = ['placeholder','title','aria-label'];
+  let busy = false;
+  function doText(node){
+    const p = node.parentNode;
+    if(!p || SKIP[p.nodeName]) return;
+    if(p.closest && p.closest('[data-notr]')) return;
+    const r = trWs(node.nodeValue);
+    if(r!=null && r!==node.nodeValue) node.nodeValue = r;
+  }
+  function doAttrs(el){
+    ATTRS.forEach(a=>{
+      if(!el.hasAttribute || !el.hasAttribute(a)) return;
+      const v = el.getAttribute(a); const r = trWs(v);
+      if(r!=null && r!==v) el.setAttribute(a,r);
+    });
+  }
+  function walk(root){
+    if(!root) return;
+    if(root.nodeType===3){ doText(root); return; }
+    if(root.nodeType!==1) return;
+    if(SKIP[root.nodeName] || (root.hasAttribute && root.hasAttribute('data-notr'))) return;
+    doAttrs(root);
+    for(let c=root.firstChild;c;c=c.nextSibling) walk(c);
+  }
+  const mo = new MutationObserver(muts=>{
+    if(busy) return; busy = true;
+    try{
+      muts.forEach(m=>{
+        if(m.type==='childList') m.addedNodes.forEach(walk);
+        else if(m.type==='characterData') doText(m.target);
+        else if(m.type==='attributes') doAttrs(m.target);
+      });
+    } finally { busy = false; }
+  });
+  function start(){
+    walk(document.body);
+    mo.observe(document.body,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:ATTRS});
+  }
+  if(document.body) start(); else document.addEventListener('DOMContentLoaded',start);
+  // alert / confirm / prompt
+  ['alert','confirm','prompt'].forEach(f=>{
+    const o = window[f]; if(typeof o!=='function') return;
+    window[f] = function(m,...r){ return o.call(window, window.__tr(m), ...r); };
+  });
+})();
+function __t(s){ return (typeof window.__tr==='function') ? window.__tr(s) : s; }
+function setLang(l){ try{ localStorage.setItem('miHorarioLang', l==='ca'?'ca':'es'); }catch(e){} location.reload(); }
+
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
-const DOW_SHORT = ['L','M','X','J','V','S','D'];
+const DOW_SHORT = LANG==='ca' ? ['Dl','Dm','Dc','Dj','Dv','Ds','Dg'] : ['L','M','X','J','V','S','D'];
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
 const IEDUCA_SITE_BASE = 'https://projektoscio-png.github.io/MyClassSchedule';
 const IEDUCA_BOOKMARKLETS = {
@@ -57,6 +161,7 @@ const ICONS = {
 
 /* ---------- state ---------- */
 let state = loadState();
+try{ const _o=JSON.stringify((state.settings&&state.settings.i18nOv)||{}); if(state.settings&&state.settings.i18nOv&&_o!==(localStorage.getItem('miHorarioI18nOv')||'{}')) localStorage.setItem('miHorarioI18nOv',_o); }catch(e){}
 let ui = { tab:'calendar', viewMode:'week', day: mondayIndex(new Date()), weekAnchor: todayISO(), subjectFilter:null, ieducaBmOpen:false };
 
 function defaultState(){
@@ -110,7 +215,7 @@ function todayISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.get
 function parseISO(s){ const [y,m,d]=s.split('-').map(Number); return new Date(y,m-1,d); }
 function fmtDateHuman(iso){
   const d = parseISO(iso);
-  return d.toLocaleDateString('es-ES',{weekday:'short', day:'numeric', month:'short'});
+  return d.toLocaleDateString(LOCALE,{weekday:'short', day:'numeric', month:'short'});
 }
 function daysBetween(aISO,bISO){
   const a=parseISO(aISO), b=parseISO(bISO);
@@ -142,9 +247,9 @@ function fmtWeekLabel(mondayIso){
   const md = parseISO(mondayIso), sd = parseISO(sunday);
   const sameMonth = md.getMonth()===sd.getMonth() && md.getFullYear()===sd.getFullYear();
   const startStr = sameMonth
-    ? md.toLocaleDateString('es-ES',{day:'numeric'})
-    : md.toLocaleDateString('es-ES',{day:'numeric', month:'short'});
-  const endStr = sd.toLocaleDateString('es-ES',{day:'numeric', month:'short'});
+    ? md.toLocaleDateString(LOCALE,{day:'numeric'})
+    : md.toLocaleDateString(LOCALE,{day:'numeric', month:'short'});
+  const endStr = sd.toLocaleDateString(LOCALE,{day:'numeric', month:'short'});
   return `${startStr} – ${endStr} ${sd.getFullYear()}`;
 }
 function minTimeToStr(m){
@@ -177,7 +282,7 @@ function getOrCreateSubject(name){
 let toastTimer=null;
 function fmtDateTime(ts){
   const d = new Date(ts);
-  return d.toLocaleDateString('es-ES',{day:'numeric',month:'short'}) + ', ' + d.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'});
+  return d.toLocaleDateString(LOCALE,{day:'numeric',month:'short'}) + ', ' + d.toLocaleTimeString(LOCALE,{hour:'2-digit',minute:'2-digit'});
 }
 function dataCounts(d){
   d = d || {};
@@ -228,7 +333,7 @@ function renderHeader(){
   };
   document.getElementById('viewTitle').textContent = titles[ui.tab];
   const d = new Date();
-  document.getElementById('dateToday').textContent = d.toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'long'});
+  document.getElementById('dateToday').textContent = d.toLocaleDateString(LOCALE,{weekday:'long', day:'numeric', month:'long'});
   document.getElementById('fabBtn').style.display = ui.tab==='settings' ? 'none':'flex';
   updateCloseBtn();
 }
@@ -335,7 +440,7 @@ function renderScheduleDay(){
     if(c.days.length>1){ metaParts.push(c.days.slice().sort((a,b)=>a-b).map(d=>DOW_SHORT[d]).join('/')); }
     let periodLabel = '';
     if(c.dateStart || c.dateEnd){
-      const df = iso=> iso ? parseISO(iso).toLocaleDateString('es-ES',{day:'numeric',month:'short'}) : '…';
+      const df = iso=> iso ? parseISO(iso).toLocaleDateString(LOCALE,{day:'numeric',month:'short'}) : '…';
       periodLabel = `📅 ${df(c.dateStart)} – ${df(c.dateEnd)}`;
     }
     const hasObs = state.items.some(i=>i.type==='task' && (i.kind==='observacion'||!i.kind) && i.subjectId===c.subjectId && i.date===dateIso && (i.classId ? i.classId===c.id : true));
@@ -553,7 +658,7 @@ function openSubjectDetailModal(subjectId){
         const daysLabel = sl.days.slice().sort((a,b)=>a-b).map(d=>DOW[d]).join(', ');
         let periodLabel = '';
         if(sl.dateStart || sl.dateEnd){
-          const df = iso=> iso ? parseISO(iso).toLocaleDateString('es-ES',{day:'numeric',month:'short'}) : '…';
+          const df = iso=> iso ? parseISO(iso).toLocaleDateString(LOCALE,{day:'numeric',month:'short'}) : '…';
           periodLabel = `<div class="class-meta" style="color:var(--primary);margin-top:2px;">📅 ${df(sl.dateStart)} – ${df(sl.dateEnd)}</div>`;
         }
         return `<div class="card" style="padding:12px 14px;margin-bottom:8px;cursor:pointer;" data-open-slot="${sl.id}">
@@ -1711,7 +1816,7 @@ function copyDayForIeduca(subjectId, dateIso){
     toast('Tu navegador no permite copiar automáticamente aquí.');
   }
 }
-function dateLabel(dateIso){ return parseISO(dateIso).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'numeric'}); }
+function dateLabel(dateIso){ return parseISO(dateIso).toLocaleDateString(LOCALE,{day:'2-digit',month:'2-digit',year:'numeric'}); }
 
 /* Trae de vuelta lo que el marcador "Leer de iEduca" copió al portapapeles: para cada
    alumno emparejado, muestra qué se propone cambiar en el registro diario de Mi
@@ -1868,7 +1973,7 @@ function exportDayXlsx(subjectId, dateIso){
   const safeName = subj.name.replace(/[^a-z0-9]+/gi,'_');
   XLSX.writeFile(wb, `registro-${safeName}-${dateIso}.xlsx`);
   if(hasAnyData){ toast('Excel descargado'); }
-  else { toast(`Excel descargado, pero no había ningún dato registrado el ${parseISO(dateIso).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'})} en esta clase`); }
+  else { toast(`Excel descargado, pero no había ningún dato registrado el ${parseISO(dateIso).toLocaleDateString(LOCALE,{day:'2-digit',month:'2-digit'})} en esta clase`); }
 }
 function openDailyRecordScreen(subjectId, dateIso, studentId){
   const allSubjects = [...state.subjects].sort((a,b)=>a.name.localeCompare(b.name,'es'));
@@ -1886,7 +1991,7 @@ function openDailyRecordScreen(subjectId, dateIso, studentId){
   const student = roster[idx];
   const rec = getOrCreateRecord(student.id, dateIso);
   const subjIdx = allSubjects.findIndex(s=>s.id===subjectId);
-  const dateLabel = capitalize(parseISO(dateIso).toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'short'}));
+  const dateLabel = capitalize(parseISO(dateIso).toLocaleDateString(LOCALE,{weekday:'long', day:'numeric', month:'short'}));
   const isExempt = isStudentExemptOn(student, dateIso);
 
   const chipRow = (id, options, current, multi)=> `<div class="dr-chips" id="${id}">${options.map(o=>{
@@ -2105,7 +2210,7 @@ function renderTasksSplitByKind(){
   function renderCell(item){
     if(!item) return `<div class="tareas-cell tareas-cell-empty">—</div>`;
     const subj = item.subjectId ? getSubject(item.subjectId) : null;
-    const dateLabel = capitalize(parseISO(item.date).toLocaleDateString('es-ES',{weekday:'short', day:'numeric', month:'short'}));
+    const dateLabel = capitalize(parseISO(item.date).toLocaleDateString(LOCALE,{weekday:'short', day:'numeric', month:'short'}));
     return `<div class="tareas-cell card task-full-card" data-open-item="${item.id}">
       <div class="task-full-header">
         <span class="task-full-date">${dateLabel}</span>
@@ -2172,7 +2277,7 @@ function renderItemsList(filterType){
     else if(diff===1) tagHtml = `<span class="item-tag ${i.type}">Mañana</span>`;
     else tagHtml = `<span class="item-tag ${i.type}">En ${diff} días</span>`;
     return `<div class="card item-card" data-open-item="${i.id}">
-      <div class="item-badge ${i.type}"><span class="d">${d.getDate()}</span><span>${d.toLocaleDateString('es-ES',{month:'short'}).replace('.','')}</span></div>
+      <div class="item-badge ${i.type}"><span class="d">${d.getDate()}</span><span>${d.toLocaleDateString(LOCALE,{month:'short'}).replace('.','')}</span></div>
       <div class="item-main">
         <div class="item-title">${escapeHtml(i.title)}</div>
         <div class="item-sub">${[subj?subj.name:null, i.time].filter(Boolean).join(' · ')||'&nbsp;'}</div>
@@ -2231,6 +2336,18 @@ function renderHolidays(){
   }
   return `
   <div class="card">
+    <div class="settings-item">
+      <div class="settings-icon">${ICONS.calSmall}</div>
+      <div class="settings-text">
+        <div class="settings-title" data-notr>Idioma · Llengua</div>
+        <div class="settings-desc" data-notr>Castellano / Català</div>
+      </div>
+      <select id="langSel" data-notr style="padding:8px;border-radius:8px;border:1px solid var(--line,#ccc);font-size:14px;">
+        <option value="es" ${LANG==='es'?'selected':''}>Castellano</option>
+        <option value="ca" ${LANG==='ca'?'selected':''}>Català</option>
+      </select>
+    </div>
+    ${LANG==='ca' ? `<div class="settings-item"><div class="settings-icon">${ICONS.calSmall}</div><div class="settings-text"><div class="settings-title" data-notr>Editar traduccions</div><div class="settings-desc" data-notr>Canvia qualsevol text català</div></div><button class="settings-action" id="btnEditTr" data-notr>Editar</button></div>` : ''}
     <div class="settings-item">
       <div class="settings-icon">${ICONS.calSmall}</div>
       <div class="settings-text">
@@ -2608,6 +2725,10 @@ function bindContentEvents(){
   };
   const btnReset = document.getElementById('btnReset');
   if(btnReset) btnReset.onclick = confirmReset;
+  const btnEditTr = document.getElementById('btnEditTr');
+  if(btnEditTr) btnEditTr.onclick = openTranslationsEditor;
+  const langSel = document.getElementById('langSel');
+  if(langSel) langSel.onchange = ()=>setLang(langSel.value);
   const weekModeSeg = document.getElementById('weekModeSeg');
   if(weekModeSeg) weekModeSeg.querySelectorAll('button').forEach(b=>{
     b.onclick=()=>{
@@ -2694,7 +2815,7 @@ function openClassOccurrenceModal(classId, dateIso){
   const existingDeb = state.items.find(i=>i.type==='task' && i.kind==='deberes' && baseFilter(i)) || null;
   const existingExam = state.items.find(i=>i.type==='exam' && baseFilter(i)) || null;
   const hasCalendar = !!(subj && subj.calendarId);
-  const dateLabel = dateIso ? capitalize(parseISO(dateIso).toLocaleDateString('es-ES',{weekday:'long', day:'numeric', month:'long', year:'numeric'})) : '';
+  const dateLabel = dateIso ? capitalize(parseISO(dateIso).toLocaleDateString(LOCALE,{weekday:'long', day:'numeric', month:'long', year:'numeric'})) : '';
 
   // Examen y deberes/observación son excluyentes entre sí. Si ya hay uno de los dos lados,
   // solo se muestra ese lado; si no hay nada todavía, se puede elegir cualquiera de los dos.
@@ -3373,6 +3494,47 @@ function bytesLookLikeSqlite(bytes){
   return true;
 }
 
+
+function openTranslationsEditor(){
+  const base = window.I18N_CA || {};
+  let ov = {}; try{ ov = JSON.parse(localStorage.getItem('miHorarioI18nOv')||'{}')||{}; }catch(e){}
+  let changed = false;
+  const esc2 = t=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const keys = Object.keys(base).filter(k=>/[A-Za-zÁÉÍÓÚáéíóúñ]{3,}/.test(k));
+  const save = ()=>{
+    try{ localStorage.setItem('miHorarioI18nOv', JSON.stringify(ov)); }catch(e){}
+    state.settings.i18nOv = Object.assign({}, ov); saveState(); changed = true;
+  };
+  openModal(`
+    <div class="modal-head"><div class="modal-title" data-notr>Editar traduccions</div>
+      <button class="icon-btn" id="trClose" style="background:var(--bg);color:var(--ink-soft)">${ICONS.x}</button></div>
+    <input type="text" id="trSearch" data-notr placeholder="Cerca (castellà o català)…" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:8px;margin-bottom:8px">
+    <div id="trList" style="max-height:55vh;overflow:auto"></div>
+    <button class="btn btn-ghost" id="trReset" data-notr style="margin:8px 0 0">Restaurar totes les traduccions originals</button>
+    <div style="font-size:12px;color:var(--ink-soft);margin-top:8px" data-notr>Els canvis s'apliquen en tancar. Els {} són els valors que posa l'app: deixa'ls al mateix lloc.</div>
+  `);
+  const list = document.getElementById('trList');
+  const draw = ()=>{
+    const q = document.getElementById('trSearch').value.trim().toLowerCase();
+    const rows = keys.filter(k=>!q || k.toLowerCase().includes(q) || (ov[k]||base[k]).toLowerCase().includes(q)).slice(0,40);
+    list.innerHTML = rows.map((k,i)=>`<div data-notr style="margin-bottom:10px"><div style="font-size:12px;color:var(--ink-soft)">${esc2(k)}</div><textarea data-k="${i}" rows="2" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid ${ov[k]!=null?'#E76F51':'#ccc'};border-radius:8px;font:inherit">${esc2(ov[k]!=null?ov[k]:base[k])}</textarea></div>`).join('') || '<div data-notr style="color:var(--ink-soft)">Cap resultat</div>';
+    list.querySelectorAll('textarea').forEach(t=>{
+      const k = rows[+t.dataset.k];
+      t.onchange = ()=>{
+        const v = t.value.trim();
+        const c1=(k.match(/\{\}/g)||[]).length, c2=(v.match(/\{\}/g)||[]).length;
+        if(!v || c1!==c2){ toast('Ha de tenir els mateixos {}'); t.value = ov[k]!=null?ov[k]:base[k]; return; }
+        if(v===base[k]) delete ov[k]; else ov[k]=v;
+        save(); t.style.borderColor = ov[k]!=null?'#E76F51':'#ccc';
+      };
+    });
+  };
+  draw();
+  document.getElementById('trSearch').oninput = draw;
+  document.getElementById('trReset').onclick = ()=>{ if(confirm('Restaurar totes les traduccions originals?')){ ov = {}; save(); draw(); } };
+  document.getElementById('trClose').onclick = ()=>{ if(changed) location.reload(); else closeModal(); };
+}
+
 function openImportChoiceModal(){
   openModal(`
     <div class="modal-head"><div class="modal-title">Importar copia de seguridad</div>
@@ -3632,7 +3794,7 @@ function checkReminders(){
     const diff = daysBetween(today,i.date);
     if(diff>=0 && diff<=(i.remindDays??2) && !i.notified){
       try{
-        new Notification(i.type==='exam' ? '📕 Examen próximo':'📝 Tarea próxima', {
+        new Notification(__t(i.type==='exam' ? '📕 Examen próximo':'📝 Tarea próxima'), {
           body: `${i.title} — ${fmtDateHuman(i.date)}`,
         });
       }catch(e){}
@@ -4450,7 +4612,7 @@ async function syncDeberesBidirectional(subjectId, from, to, opts){
       <b>${pulled}</b> deberes del calendario traídos a la app.<br>
       <b>${pulledDeletes}</b> deberes borrados en la app porque se habían borrado en el calendario.<br>
       <b>${examsPushed}</b> examen(es) de la app escritos en el calendario.<br>
-      ${conflicts.length ? `<b>${conflicts.length}</b> día(s) con contenido distinto en ambos sitios (no tocados): ${conflicts.map(d=>parseISO(d).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'})).join(', ')}` : 'Sin conflictos.'}
+      ${conflicts.length ? `<b>${conflicts.length}</b> día(s) con contenido distinto en ambos sitios (no tocados): ${conflicts.map(d=>parseISO(d).toLocaleDateString(LOCALE,{day:'2-digit',month:'2-digit'})).join(', ')}` : 'Sin conflictos.'}
     </p>
     <button class="btn btn-primary" id="syncDone">Aceptar</button>
   `);
