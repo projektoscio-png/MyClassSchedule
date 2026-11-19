@@ -11,7 +11,7 @@ const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
 const DRIVE_BACKUPS_KEEP = 40; // valor por defecto; se puede cambiar en Ajustes (state.settings.backupsKeep)
 function driveBackupsKeep(){ const n = Number(state && state.settings && state.settings.backupsKeep); return (n>=1 && n<=500) ? Math.floor(n) : DRIVE_BACKUPS_KEEP; }
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-114';
+const APP_VERSION = '2026-08-22-115';
 // ===== i18n: idioma de la interfaz (es por defecto; ca = català, traducción en tiempo de ejecución) =====
 const LANG = (()=>{ try{ return localStorage.getItem('miHorarioLang')==='ca' ? 'ca' : 'es'; }catch(e){ return 'es'; } })();
 const LOCALE = LANG==='ca' ? 'ca-ES' : 'es-ES';
@@ -2797,7 +2797,7 @@ overlay.addEventListener('click', (e)=>{ if(e.target===overlay) closeModal(); })
    por defecto, para que sea más fácil leer con calma mientras se desplaza. */
 document.addEventListener('wheel', (e)=>{
   const el = e.target && e.target.closest ? e.target.closest('textarea') : null;
-  if(!el || el.hasAttribute('data-nowheel') || el.scrollHeight <= el.clientHeight+1) return;
+  if(!el || el.hasAttribute('data-nowheel')) return;
   e.preventDefault();
   const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 20;
   const direction = e.deltaY > 0 ? 1 : -1;
