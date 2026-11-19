@@ -11,7 +11,7 @@ const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
 const DRIVE_BACKUPS_KEEP = 40; // valor por defecto; se puede cambiar en Ajustes (state.settings.backupsKeep)
 function driveBackupsKeep(){ const n = Number(state && state.settings && state.settings.backupsKeep); return (n>=1 && n<=500) ? Math.floor(n) : DRIVE_BACKUPS_KEEP; }
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-110';
+const APP_VERSION = '2026-08-22-111';
 // ===== i18n: idioma de la interfaz (es por defecto; ca = català, traducción en tiempo de ejecución) =====
 const LANG = (()=>{ try{ return localStorage.getItem('miHorarioLang')==='ca' ? 'ca' : 'es'; }catch(e){ return 'es'; } })();
 const LOCALE = LANG==='ca' ? 'ca-ES' : 'es-ES';
@@ -2339,18 +2339,6 @@ function renderHolidays(){
     <div class="settings-item">
       <div class="settings-icon">${ICONS.calSmall}</div>
       <div class="settings-text">
-        <div class="settings-title" data-notr>Idioma · Llengua</div>
-        <div class="settings-desc" data-notr>Castellano / Català</div>
-      </div>
-      <select id="langSel" data-notr style="padding:8px;border-radius:8px;border:1px solid var(--line,#ccc);font-size:14px;">
-        <option value="es" ${LANG==='es'?'selected':''}>Castellano</option>
-        <option value="ca" ${LANG==='ca'?'selected':''}>Català</option>
-      </select>
-    </div>
-    ${LANG==='ca' ? `<div class="settings-item"><div class="settings-icon">${ICONS.calSmall}</div><div class="settings-text"><div class="settings-title" data-notr>Editar traduccions</div><div class="settings-desc" data-notr>Canvia qualsevol text català</div></div><button class="settings-action" id="btnEditTr" data-notr>Editar</button></div>` : ''}
-    <div class="settings-item">
-      <div class="settings-icon">${ICONS.calSmall}</div>
-      <div class="settings-text">
         <div class="settings-title">Días de la semana en el horario</div>
         <div class="settings-desc">Elige si el Calendario muestra solo días lectivos o la semana completa</div>
       </div>
@@ -2498,6 +2486,20 @@ function renderHolidays(){
         <div class="settings-desc">${state.classes.length} clases · ${state.items.length} exámenes/tareas · ${state.holidays.length} festivos</div>
       </div>
     </div>
+  </div>
+  <div class="card">
+    <div class="settings-item">
+      <div class="settings-icon">${ICONS.calSmall}</div>
+      <div class="settings-text">
+        <div class="settings-title" data-notr>Idioma · Llengua</div>
+        <div class="settings-desc" data-notr>Castellano / Català</div>
+      </div>
+      <select id="langSel" data-notr style="padding:8px;border-radius:8px;border:1px solid var(--line,#ccc);font-size:14px;">
+        <option value="es" ${LANG==='es'?'selected':''}>Castellano</option>
+        <option value="ca" ${LANG==='ca'?'selected':''}>Català</option>
+      </select>
+    </div>
+    ${LANG==='ca' ? `<div class="settings-item"><div class="settings-icon">${ICONS.calSmall}</div><div class="settings-text"><div class="settings-title" data-notr>Editar traduccions</div><div class="settings-desc" data-notr>Canvia qualsevol text català</div></div><button class="settings-action" id="btnEditTr" data-notr>Editar</button></div>` : ''}
   </div>
   <button class="btn btn-danger" id="btnReset">${ICONS.trash} Borrar todos los datos</button>
   <p style="text-align:center; font-size:11.5px; color:var(--ink-faint); margin-top:18px;">Mi Horario · los datos se guardan solo en este dispositivo</p>
