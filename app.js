@@ -11,18 +11,36 @@ const DRIVE_BACKUP_PREFIX = 'mi-horario-backup-';
 const DRIVE_BACKUPS_KEEP = 40; // valor por defecto; se puede cambiar en Ajustes (state.settings.backupsKeep)
 function driveBackupsKeep(){ const n = Number(state && state.settings && state.settings.backupsKeep); return (n>=1 && n<=500) ? Math.floor(n) : DRIVE_BACKUPS_KEEP; }
 const DRIVE_PHOTOS_FILE_NAME = 'mi-horario-fotos.json';
-const APP_VERSION = '2026-08-22-115';
+const APP_VERSION = '2026-08-22-116';
 // ===== i18n: idioma de la interfaz (es por defecto; ca = català, traducción en tiempo de ejecución) =====
-const LANG = (()=>{ try{ return localStorage.getItem('miHorarioLang')==='ca' ? 'ca' : 'es'; }catch(e){ return 'es'; } })();
-const LOCALE = LANG==='ca' ? 'ca-ES' : 'es-ES';
+function i18nReadPacks(){
+  let packs = {};
+  try{ packs = JSON.parse(localStorage.getItem('miHorarioLangPacks')||'{}')||{}; }catch(e){}
+  try{ // migración de las ediciones antiguas del catalán
+    const old = JSON.parse(localStorage.getItem('miHorarioI18nOv')||'null');
+    if(old && typeof old==='object'){
+      packs.ca = packs.ca || {}; packs.ca.entries = Object.assign({}, old, packs.ca.entries||{});
+      localStorage.setItem('miHorarioLangPacks', JSON.stringify(packs)); localStorage.removeItem('miHorarioI18nOv');
+    }
+  }catch(e){}
+  return packs;
+}
+const LANG_PACKS = i18nReadPacks();
+function i18nEntries(code){
+  const b = (code==='ca' && window.I18N_CA) ? window.I18N_CA : {};
+  const o = (LANG_PACKS[code] && LANG_PACKS[code].entries) || {};
+  return Object.assign({}, b, o);
+}
+const LANG = (()=>{ try{ const c = localStorage.getItem('miHorarioLang'); return (c==='ca' || (c && c!=='es' && LANG_PACKS[c])) ? c : 'es'; }catch(e){ return 'es'; } })();
+const LANG_ENTRIES = LANG==='es' ? {} : i18nEntries(LANG);
+const LOCALE = LANG_ENTRIES['@locale'] || 'es-ES';
 (function i18nSetup(){
-  if(LANG!=='ca' || !window.I18N_CA) return;
-  document.documentElement.lang = 'ca';
+  if(LANG==='es') return;
+  document.documentElement.lang = LOCALE.split('-')[0];
   const norm = s => String(s).replace(/\s+/g,' ').trim();
   const dict = new Map(); const pats = [];
   const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-  let OV = {}; try{ OV = JSON.parse(localStorage.getItem('miHorarioI18nOv')||'{}')||{}; }catch(e){}
-  const BASE = Object.assign({}, window.I18N_CA, OV);
+  const BASE = {}; Object.keys(LANG_ENTRIES).forEach(k=>{ if(k[0]!=='@' && LANG_ENTRIES[k]) BASE[k]=LANG_ENTRIES[k]; });
   const SRC = Object.assign({}, BASE);
   // variantes sin el {} inicial/final (cuando ese hueco es un icono u otro elemento aparte)
   Object.keys(BASE).forEach(k=>{
@@ -55,6 +73,10 @@ const LOCALE = LANG==='ca' ? 'ca-ES' : 'es-ES';
         out = p.v.replace(/\{\}/g, ()=>{ const g = m[++i]; const t = tr(g); return t==null ? g : t; });
         break;
       }
+    }
+    if(out==null && n.charAt(0)!==n.charAt(0).toUpperCase()){
+      const t2 = tr(n.charAt(0).toUpperCase()+n.slice(1));
+      if(t2!=null) out = t2.charAt(0).toLowerCase()+t2.slice(1);
     }
     if(tcache.size>3000) tcache.clear();
     tcache.set(n,out);
@@ -114,10 +136,15 @@ const LOCALE = LANG==='ca' ? 'ca-ES' : 'es-ES';
   });
 })();
 function __t(s){ return (typeof window.__tr==='function') ? window.__tr(s) : s; }
-function setLang(l){ try{ localStorage.setItem('miHorarioLang', l==='ca'?'ca':'es'); }catch(e){} location.reload(); }
+function i18nLangList(){
+  const l = [{code:'es',name:'Castellano'},{code:'ca',name:'Català'}];
+  Object.keys(LANG_PACKS).forEach(c=>{ if(c!=='ca' && c!=='es' && LANG_PACKS[c]) l.push({code:c,name:LANG_PACKS[c].name||c}); });
+  return l;
+}
+function setLang(l){ try{ localStorage.setItem('miHorarioLang', l||'es'); }catch(e){} location.reload(); }
 
 const DOW = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
-const DOW_SHORT = LANG==='ca' ? ['Dl','Dm','Dc','Dj','Dv','Ds','Dg'] : ['L','M','X','J','V','S','D'];
+const DOW_SHORT = (()=>{ const a = String(LANG_ENTRIES['@dow']||'').split(',').map(x=>x.trim()); return a.length===7 && a.every(Boolean) ? a : ['L','M','X','J','V','S','D']; })();
 const SUBJECT_COLORS = ['#457B9D','#E76F51','#2A9D8F','#E9C46A','#7B6D8E','#D65A5A','#6A8D73','#9C6644','#3A86FF','#B5838D'];
 const IEDUCA_SITE_BASE = 'https://projektoscio-png.github.io/MyClassSchedule';
 const IEDUCA_BOOKMARKLETS = {
@@ -161,7 +188,7 @@ const ICONS = {
 
 /* ---------- state ---------- */
 let state = loadState();
-try{ const _o=JSON.stringify((state.settings&&state.settings.i18nOv)||{}); if(state.settings&&state.settings.i18nOv&&_o!==(localStorage.getItem('miHorarioI18nOv')||'{}')) localStorage.setItem('miHorarioI18nOv',_o); }catch(e){}
+try{ const _o=state.settings&&state.settings.langPacks; if(_o && JSON.stringify(_o)!==JSON.stringify(LANG_PACKS)) localStorage.setItem('miHorarioLangPacks',JSON.stringify(_o)); }catch(e){}
 let ui = { tab:'calendar', viewMode:'week', day: mondayIndex(new Date()), weekAnchor: todayISO(), subjectFilter:null, ieducaBmOpen:false };
 
 function defaultState(){
@@ -655,7 +682,7 @@ function openSubjectDetailModal(subjectId){
     <div class="field">
       <label>Tramos horarios</label>
       ${slots.length ? slots.map(sl=>{
-        const daysLabel = sl.days.slice().sort((a,b)=>a-b).map(d=>DOW[d]).join(', ');
+        const daysLabel = sl.days.slice().sort((a,b)=>a-b).map(d=>__t(DOW[d])).join(', ');
         let periodLabel = '';
         if(sl.dateStart || sl.dateEnd){
           const df = iso=> iso ? parseISO(iso).toLocaleDateString(LOCALE,{day:'numeric',month:'short'}) : '…';
@@ -2491,15 +2518,14 @@ function renderHolidays(){
     <div class="settings-item">
       <div class="settings-icon">${ICONS.calSmall}</div>
       <div class="settings-text">
-        <div class="settings-title" data-notr>Idioma · Llengua</div>
-        <div class="settings-desc" data-notr>Castellano / Català</div>
+        <div class="settings-title" data-notr>Idioma / Language</div>
+        <div class="settings-desc" data-notr>Language</div>
       </div>
-      <select id="langSel" data-notr style="padding:8px;border-radius:8px;border:1px solid var(--line,#ccc);font-size:14px;">
-        <option value="es" ${LANG==='es'?'selected':''}>Castellano</option>
-        <option value="ca" ${LANG==='ca'?'selected':''}>Català</option>
+      <select id="langSel" data-notr style="padding:8px;border-radius:8px;border:1px solid var(--line,#ccc);font-size:14px;max-width:45%;">
+        ${i18nLangList().map(l=>`<option value="${l.code}" ${LANG===l.code?'selected':''}>${escapeHtml(l.name)}</option>`).join('')}
       </select>
     </div>
-    ${LANG==='ca' ? `<div class="settings-item"><div class="settings-icon">${ICONS.calSmall}</div><div class="settings-text"><div class="settings-title" data-notr>Editar traduccions</div><div class="settings-desc" data-notr>Canvia qualsevol text català</div></div><button class="settings-action" id="btnEditTr" data-notr>Editar</button></div>` : ''}
+    <div class="settings-item"><div class="settings-icon">${ICONS.calSmall}</div><div class="settings-text"><div class="settings-title">Idiomas y traducciones</div><div class="settings-desc">Edita una traducción, crea un idioma nuevo o importa/exporta uno</div></div><button class="settings-action" id="btnEditTr">Editar</button></div>
   </div>
   <button class="btn btn-danger" id="btnReset">${ICONS.trash} Borrar todos los datos</button>
   <p style="text-align:center; font-size:11.5px; color:var(--ink-faint); margin-top:18px;">Mi Horario · los datos se guardan solo en este dispositivo</p>
@@ -3498,43 +3524,136 @@ function bytesLookLikeSqlite(bytes){
 
 
 function openTranslationsEditor(){
-  const base = window.I18N_CA || {};
-  let ov = {}; try{ ov = JSON.parse(localStorage.getItem('miHorarioI18nOv')||'{}')||{}; }catch(e){}
-  let changed = false;
+  const MASTER = Object.keys(window.I18N_CA || {}).filter(k=>k[0]!=='@');
+  let packs = JSON.parse(JSON.stringify(LANG_PACKS));
+  let code = LANG!=='es' ? LANG : 'ca';
+  let changed = false, shown = 40;
   const esc2 = t=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-  const keys = Object.keys(base).filter(k=>/[A-Za-zÁÉÍÓÚáéíóúñ]{3,}/.test(k));
+  const builtin = c => c==='ca' ? (window.I18N_CA||{}) : {};
+  const eff = c => Object.assign({}, builtin(c), (packs[c]&&packs[c].entries)||{});
   const save = ()=>{
-    try{ localStorage.setItem('miHorarioI18nOv', JSON.stringify(ov)); }catch(e){}
-    state.settings.i18nOv = Object.assign({}, ov); saveState(); changed = true;
+    try{ localStorage.setItem('miHorarioLangPacks', JSON.stringify(packs)); }catch(e){}
+    state.settings.langPacks = JSON.parse(JSON.stringify(packs)); saveState(); changed = true;
   };
-  openModal(`
-    <div class="modal-head"><div class="modal-title" data-notr>Editar traduccions</div>
+  const setEntry = (c,k,v)=>{
+    packs[c] = packs[c] || {name:c, entries:{}}; packs[c].entries = packs[c].entries || {};
+    if(!v || (c==='ca' && builtin(c)[k]===v)) delete packs[c].entries[k]; else packs[c].entries[k]=v;
+  };
+  const langs = ()=>{ const l = [{code:'ca',name:'Català'}]; Object.keys(packs).forEach(c=>{ if(c!=='ca'&&c!=='es') l.push({code:c,name:packs[c].name||c}); }); return l; };
+  const shell = ()=>{
+    openModal(`
+    <div class="modal-head"><div class="modal-title">Idiomas y traducciones</div>
       <button class="icon-btn" id="trClose" style="background:var(--bg);color:var(--ink-soft)">${ICONS.x}</button></div>
-    <input type="text" id="trSearch" data-notr placeholder="Cerca (castellà o català)…" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:8px;margin-bottom:8px;position:sticky;top:-18px;z-index:2;background:var(--paper)">
+    <div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px">Idioma a editar</div>
+    <select id="trLang" data-notr style="width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;margin-bottom:8px">${langs().map(l=>`<option value="${l.code}" ${l.code===code?'selected':''}>${esc2(l.name)}</option>`).join('')}</select>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      <button class="btn btn-ghost" id="trNew" style="margin:0;flex:1">Idioma nuevo</button>
+      <button class="btn btn-ghost" id="trExp" style="margin:0;flex:1">Exportar</button>
+      <button class="btn btn-ghost" id="trImp" style="margin:0;flex:1">Importar</button>
+      <button class="btn btn-ghost" id="trDel" style="margin:0;flex:1">Eliminar idioma</button>
+    </div>
+    <div id="trMeta"></div>
+    <div style="display:flex;gap:6px;margin-bottom:8px;position:sticky;top:-18px;z-index:2;background:var(--paper)">
+      <input type="text" id="trSearch" placeholder="Buscar…" style="flex:1;min-width:0;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:8px">
+      <select id="trFilter" style="padding:10px;border:1px solid #ccc;border-radius:8px"><option value="all">Todos</option><option value="missing">Sin traducir</option></select>
+    </div>
+    <div id="trCount" style="font-size:12px;color:var(--ink-soft);margin-bottom:6px"></div>
     <div id="trList"></div>
-    <button class="btn btn-ghost" id="trReset" data-notr style="margin:8px 0 0">Restaurar totes les traduccions originals</button>
-    <div style="font-size:12px;color:var(--ink-soft);margin-top:8px" data-notr>Els canvis s'apliquen en tancar. Els {} són els valors que posa l'app: deixa'ls al mateix lloc.</div>
+    <button class="btn btn-ghost" id="trMore" style="margin:8px 0 0">Mostrar más</button>
+    <div style="font-size:12px;color:var(--ink-soft);margin-top:8px">Lo que no esté traducido se ve en castellano. Los {} son valores que pone la app: déjalos en el mismo orden. Los cambios se aplican al cerrar.</div>
   `);
-  const list = document.getElementById('trList');
-  const draw = ()=>{
+    wire();
+  };
+  const isCustom = c => c!=='ca';
+  function drawMeta(){
+    const e = eff(code);
+    document.getElementById('trMeta').innerHTML = `
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <label style="flex:1;font-size:12px;color:var(--ink-soft)">Locale (ej. fr-FR)<input id="trLocale" value="${esc2(e['@locale']||'')}" placeholder="es-ES" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #ccc;border-radius:8px"></label>
+        <label style="flex:2;font-size:12px;color:var(--ink-soft)">Días (L,M,X,J,V,S,D)<input id="trDow" value="${esc2(e['@dow']||'')}" placeholder="L,M,X,J,V,S,D" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #ccc;border-radius:8px"></label>
+      </div>`;
+    const sv = (id,k)=>{ document.getElementById(id).onchange = ev=>{ const v = ev.target.value.trim();
+      if(k==='@dow' && v && v.split(',').filter(x=>x.trim()).length!==7){ toast('Tienen que ser 7 separados por comas'); ev.target.value = eff(code)[k]||''; return; }
+      setEntry(code,k,v); save(); }; };
+    sv('trLocale','@locale'); sv('trDow','@dow');
+  }
+  function draw(){
+    const e = eff(code);
     const q = document.getElementById('trSearch').value.trim().toLowerCase();
-    const rows = keys.filter(k=>!q || k.toLowerCase().includes(q) || (ov[k]||base[k]).toLowerCase().includes(q)).slice(0,40);
-    list.innerHTML = rows.map((k,i)=>`<div data-notr style="margin-bottom:10px"><div style="font-size:12px;color:var(--ink-soft)">${esc2(k)}</div><textarea data-nowheel data-k="${i}" rows="2" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid ${ov[k]!=null?'#E76F51':'#ccc'};border-radius:8px;font:inherit;overflow:hidden;resize:none;touch-action:pan-y">${esc2(ov[k]!=null?ov[k]:base[k])}</textarea></div>`).join('') || '<div data-notr style="color:var(--ink-soft)">Cap resultat</div>';
+    const f = document.getElementById('trFilter').value;
+    const all = MASTER.filter(k=>{
+      if(f==='missing' && e[k]) return false;
+      return !q || k.toLowerCase().includes(q) || (e[k]||'').toLowerCase().includes(q);
+    });
+    const missing = MASTER.filter(k=>!e[k]).length;
+    document.getElementById('trCount').textContent = `${MASTER.length-missing}/${MASTER.length}` + (all.length!==MASTER.length?` · ${all.length}`:'');
+    const rows = all.slice(0,shown);
+    const list = document.getElementById('trList');
+    list.innerHTML = rows.map((k,i)=>`<div data-notr style="margin-bottom:10px"><div style="font-size:12px;color:var(--ink-soft)">${esc2(k)}</div><textarea data-nowheel data-k="${i}" rows="2" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid ${e[k]?(packs[code]&&packs[code].entries&&packs[code].entries[k]?'#E76F51':'#ccc'):'#d33'};border-radius:8px;font:inherit;overflow:hidden;resize:none;touch-action:pan-y">${esc2(e[k]||'')}</textarea></div>`).join('') || '<div style="color:var(--ink-soft)">Sin resultados</div>';
+    document.getElementById('trMore').style.display = all.length>shown ? '' : 'none';
     list.querySelectorAll('textarea').forEach(t=>{
       const k = rows[+t.dataset.k];
       t.onchange = ()=>{
         const v = t.value.trim();
         const c1=(k.match(/\{\}/g)||[]).length, c2=(v.match(/\{\}/g)||[]).length;
-        if(!v || c1!==c2){ toast('Ha de tenir els mateixos {}'); t.value = ov[k]!=null?ov[k]:base[k]; return; }
-        if(v===base[k]) delete ov[k]; else ov[k]=v;
-        save(); t.style.borderColor = ov[k]!=null?'#E76F51':'#ccc';
+        if(v && c1!==c2){ toast('Tiene que haber los mismos {}'); t.value = eff(code)[k]||''; return; }
+        setEntry(code,k,v); save(); t.style.borderColor = v?'#E76F51':'#d33';
+        document.getElementById('trCount').textContent = `${MASTER.length-MASTER.filter(x=>!eff(code)[x]).length}/${MASTER.length}`;
       };
     });
-  };
-  draw();
-  document.getElementById('trSearch').oninput = draw;
-  document.getElementById('trReset').onclick = ()=>{ if(confirm('Restaurar totes les traduccions originals?')){ ov = {}; save(); draw(); } };
-  document.getElementById('trClose').onclick = ()=>{ if(changed) location.reload(); else closeModal(); };
+  }
+  function wire(){
+    drawMeta(); draw();
+    document.getElementById('trSearch').oninput = ()=>{ shown=40; draw(); };
+    document.getElementById('trFilter').onchange = ()=>{ shown=40; draw(); };
+    document.getElementById('trMore').onclick = ()=>{ shown+=40; draw(); };
+    document.getElementById('trLang').onchange = ev=>{ code = ev.target.value; shown=40; drawMeta(); draw(); };
+    document.getElementById('trDel').style.display = isCustom(code) ? '' : 'none';
+    document.getElementById('trLang').addEventListener('change',()=>{ document.getElementById('trDel').style.display = isCustom(code)?'':'none'; });
+    document.getElementById('trNew').onclick = ()=>{
+      const name = (prompt('Nombre del idioma nuevo (ej. English, Français)')||'').trim();
+      if(!name) return;
+      const c = 'x'+Date.now().toString(36);
+      packs[c] = {name, entries:{}}; code = c; save(); shell();
+    };
+    document.getElementById('trDel').onclick = ()=>{
+      if(!isCustom(code)) return;
+      if(!confirm('¿Eliminar el idioma «'+(packs[code].name||code)+'» y todas sus traducciones? No se puede deshacer.')) return;
+      delete packs[code];
+      try{ if(localStorage.getItem('miHorarioLang')===code) localStorage.setItem('miHorarioLang','es'); }catch(e){}
+      code = 'ca'; save(); shell();
+    };
+    document.getElementById('trExp').onclick = ()=>{
+      const e = eff(code); const out = {}; MASTER.forEach(k=>{ out[k] = e[k]||''; });
+      ['@locale','@dow'].forEach(k=>{ out[k] = e[k]||''; });
+      const blob = new Blob([JSON.stringify({app:'MiHorario',name:(packs[code]&&packs[code].name)||'Català',entries:out},null,1)],{type:'application/json'});
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+      a.download = 'idioma-'+(((packs[code]&&packs[code].name)||code).replace(/[^\w-]+/g,'_'))+'.json'; a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+    };
+    document.getElementById('trImp').onclick = ()=>{
+      const inp = document.createElement('input'); inp.type='file'; inp.accept='.json,application/json';
+      inp.onchange = async ()=>{
+        try{
+          const j = JSON.parse(await inp.files[0].text());
+          const ent = (j && j.entries && typeof j.entries==='object') ? j.entries : j;
+          const clean = {}; Object.keys(ent).forEach(k=>{ if(typeof ent[k]==='string' && ent[k].trim()) clean[k]=ent[k].trim(); });
+          if(!Object.keys(clean).length) throw new Error('vacío');
+          let name = (j.name||'').toString().trim() || (prompt('Nombre del idioma')||'').trim();
+          if(!name) return;
+          const same = Object.keys(packs).find(c=>c!=='ca' && (packs[c].name||'').toLowerCase()===name.toLowerCase());
+          if(same && !confirm('Ya existe «'+name+'». ¿Reemplazar sus traducciones?')) return;
+          const c = same || (name.toLowerCase()==='català'||name.toLowerCase()==='catala' ? 'ca' : 'x'+Date.now().toString(36));
+          if(c==='ca'){ packs.ca = packs.ca||{name:'Català',entries:{}}; packs.ca.entries = {}; Object.keys(clean).forEach(k=>{ if(builtin('ca')[k]!==clean[k]) packs.ca.entries[k]=clean[k]; }); }
+          else packs[c] = {name, entries:clean};
+          code = c; save(); shell(); toast('Idioma importado');
+        }catch(err){ toast('Archivo no válido'); }
+      };
+      inp.click();
+    };
+    document.getElementById('trClose').onclick = ()=>{ if(changed) location.reload(); else closeModal(); };
+  }
+  shell();
 }
 
 function openImportChoiceModal(){
